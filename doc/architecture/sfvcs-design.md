@@ -10,7 +10,17 @@
 
 # 1. 文書の目的
 
-本書は `sfvcs` の初期要件、データモデル、ストレージ構造、差分計算、実装方針、性能方針、および今後の未決定事項を記録するための仮設計書である。
+本書は `sfvcs` の基本要件、アーキテクチャ設計、データモデル、ストレージ構造、差分計算、実装方針、および関連詳細仕様書へのインデックスを記録するための基本設計書である。
+
+詳細なバイナリレイアウト、具体アルゴリズムの擬似コード、パックファイル物理フォーマット、および CLI/API インターフェースについては、以下の専用詳細仕様書を参照すること。
+
+- **[バイナリフォーマット・カノニカルシリアライズ詳細仕様書](../specs/spec-binary-format.md)** (`doc/specs/spec-binary-format.md`)
+- **[アルゴリズム詳細仕様書 (FastCDC, Prolly Tree, Diff, Move/Rename最適化)](../specs/spec-algorithms.md)** (`doc/specs/spec-algorithms.md`)
+- **[ストレージ構造・パックファイル詳細仕様書](../specs/spec-storage.md)** (`doc/specs/spec-storage.md`)
+- **[仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB) 詳細仕様書](../specs/spec-virtual-vcs.md)** (`doc/specs/spec-virtual-vcs.md`)
+- **[設定ファイル・Ignore・属性詳細仕様書 (.sfvcsconfig, .sfvcsignore, .sfvcsattributes)](../specs/spec-config-and-attributes.md)** (`doc/specs/spec-config-and-attributes.md`)
+- **[CLI コマンド・Core API・エラー処理詳細仕様書](../specs/spec-cli-and-api.md)** (`doc/specs/spec-cli-and-api.md`)
+- **[ドキュメント命名・構造・記述ルール](../rules/doc-naming-rules.md)** (`doc/rules/doc-naming-rules.md`)
 
 本書では、現時点で確定した設計と、研究・実験によって今後変更する可能性がある設計を明確に区別する。
 
@@ -3309,84 +3319,47 @@ Kleppmann et al.
 
 ---
 
-# 135. 現時点の暫定パラメータ
+# 135. 確定パラメータ仕様
 
-以下は「初期実験値」であり、仕様上の確定値ではない。
+本設計書および詳細仕様書に基づき確定された標準パラメータ値を以下に示す。
 
-    Hash:
-        SHA-256
+    Hash アルゴリズム:
+        SHA-256 (33バイト固定長 CID: [0x01][32バイトHash])
 
-    Leaf CDC:
-        target = 8 KiB
-        min    = 2 KiB
-        max    = 64 KiB
+    Leaf CDC (FastCDC):
+        MIN_SIZE    = 2 KiB (2,048 B)
+        AVG_SIZE    = 8 KiB (8,192 B)
+        MAX_SIZE    = 64 KiB (65,536 B)
+        Window Size = 48 bytes
+        Hash        = Gear Hash (256 x 64bit uint)
 
-    CDC window:
-        約64 bytesを候補
+    Internal Sequence Node:
+        目標ファンアウト = 64
+        グループ境界条件 = (Child_CID_uint32 & 0x3F) == 0
+        最大ファンアウト = 128
 
-    Internal node:
-        serialized size基準
-        fixed fanoutは避ける
+    Small File Inline 閾値:
+        1,024 バイト以下 (SFFL 内に直列格納)
 
-    Tree depth:
-        adaptive
+    Winnowing Fingerprint:
+        k-gram = 16 bytes
+        window = 32 bytes
+        Jaccard 類似度閾値 = 0.70
 
-    Diff:
-        exact CID first
-        then structural alignment
-        then fingerprint candidate
-        then leaf diff
-
-    Fingerprint:
-        未確定
-
-    Sequence alignment:
-        未確定
-
-    Move threshold:
-        未確定
-
-    Small-file inline threshold:
-        未確定
-
-    Pack size:
-        未確定
+    Packfile:
+        Magic = "SFPK"
+        圧縮   = zlib / Deflate (Level 6)
 
 ---
 
-# 136. 今後決定すべき事項
+# 136. 今後の開発・ベンチマーク検証計画
 
-優先度が高い順。
+基本仕様および詳細アルゴリズムの定義が完了したため、次のフェーズでは各パラメータの実際のワークロード下でのベンチマーク検証およびチューニングを行う。
 
-## 最優先
-
-1. Leaf CDCアルゴリズム
-2. chunk size distribution
-3. chunk target/min/max
-4. internal node boundary algorithm
-5. internal node target size
-6. sequence alignment algorithm
-7. CID occurrence index
-8. MOVE detection algorithm
-
-## 次点
-
-9. fingerprint algorithm
-10. fingerprint threshold
-11. small-file inline threshold
-12. pack format
-13. pack index
-14. compression
-15. GC algorithm
-
-## 後回し
-
-16. merge
-17. remote protocol
-18. distributed operation
-19. CRDT
-20. semantic diff
-21. AST plugin
+1. **FastCDC パラメータ測定 (MIN/AVG/MAX 組み合わせ比較)**
+2. **Prolly Tree ファンアウト密度とツリー深さの最適化**
+3. **大規模リポジトリにおける Multi-resolution Diff の処理時間およびノード探索数の計測**
+4. **Winnowing Fingerprint による Move 検出の適合率・再現率評価**
 
 ---
 
