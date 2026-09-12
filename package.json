@@ -1,0 +1,39 @@
+{
+  "name": "sfvcs",
+  "version": "0.0.1",
+  "description": "gitみたいなバージョン管理システムライブラリ",
+  "license": "GPL-3.0",
+  "author": "hi2ma-bu4",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hi2ma-bu4/sfvcs.git"
+  },
+  "homepage": "https://github.com/hi2ma-bu4/sfvcs",
+  "bugs": {
+    "url": "https://github.com/hi2ma-bu4/sfvcs/issues"
+  },
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": ""
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "volta": {
+    "node": "24.21.0",
+    "npm": "12.0.2"
+  }
+}

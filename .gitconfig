@@ -1,0 +1,14 @@
+[core]
+    ignorecase = false
+
+[submodule]
+    recurse = true
+
+[merge "ours"]
+    name = always keep our version
+    driver = true
+
+[merge "theirs"]
+    name = always take the other branch
+    driver = sh -c "cat \"$1\" > \"$2\"" -- %B %A
+

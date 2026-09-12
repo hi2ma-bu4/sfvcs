@@ -1,0 +1,45 @@
+# フォルダ群
+**/dev/.cache/**    merge=theirs
+**/dist/**          merge=theirs
+
+# 通常テキスト
+*.txt   text    eol=lf
+
+# 本体コード
+*.js    text    eol=lf
+*.js.map text   eol=lf  merge=theirs
+*.cjs   text    eol=lf
+*.mjs   text    eol=lf
+*.ts    text    eol=lf
+*.d.ts  text    eol=lf  merge=theirs
+*.astro text    eol=lf
+*.html  text    eol=lf  merge=theirs
+*.css   text    eol=lf
+
+# 開発コード
+*.bat   text    eol=crlf
+*.sh    text    eol=lf
+*.yml   text    eol=lf
+
+# データ保持
+*.json  text    eol=lf
+
+# 画像
+*.jpg   binary  merge=theirs
+*.jpeg  binary  merge=theirs
+*.png   binary  merge=theirs
+*.webp  binary  merge=theirs
+
+# 音声
+*.mp3   binary  merge=theirs
+*.wav   binary  merge=theirs
+*.ogg   binary  merge=theirs
+
+# フォント
+*.ttf   binary  merge=theirs
+
+# 圧縮
+*.gz    binary  merge=theirs
+*.br    binary  merge=theirs
+*.zst   binary  merge=theirs
+
