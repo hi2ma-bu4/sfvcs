@@ -20,14 +20,14 @@
 
 ## 1.1 パラメータ仕様
 
-| パラメータ名 | 変数名 | デフォルト値 | 設定可能範囲 | 説明 |
-|---|---|---|---|---|
-| 最小チャンクサイズ | `MIN_SIZE` | **2,048 B (2 KiB)** | 512 B 〜 8 KiB | これ未満の境界検出をスキップ |
-| ターゲットサイズ | `AVG_SIZE` | **8,192 B (8 KiB)** | 2 KiB 〜 32 KiB | 正規化境界判定の目標平均サイズ |
-| 最大チャンクサイズ | `MAX_SIZE` | **65,536 B (64 KiB)**| 16 KiB 〜 256 KiB | 強制切り出し閾値 |
-| ローリングウィンドウ | `WINDOW_SIZE` | **48 バイト** | 固定 | ハッシュ計算用ウィンドウ |
-| 正規化マスク1 | `MASK_S` | `0x0000d90003510000ULL` | - | `MIN_SIZE` 〜 `AVG_SIZE` 用の厳格マスク (約13ビット立て) |
-| 正規化マスク2 | `MASK_L` | `0x0000d90000000000ULL` | - | `AVG_SIZE` 〜 `MAX_SIZE` 用の緩和マスク (約9ビット立て) |
+| パラメータ名         | 変数名        | デフォルト値            | 設定可能範囲      | 説明                                                     |
+| -------------------- | ------------- | ----------------------- | ----------------- | -------------------------------------------------------- |
+| 最小チャンクサイズ   | `MIN_SIZE`    | **2,048 B (2 KiB)**     | 512 B 〜 8 KiB    | これ未満の境界検出をスキップ                             |
+| ターゲットサイズ     | `AVG_SIZE`    | **8,192 B (8 KiB)**     | 2 KiB 〜 32 KiB   | 正規化境界判定の目標平均サイズ                           |
+| 最大チャンクサイズ   | `MAX_SIZE`    | **65,536 B (64 KiB)**   | 16 KiB 〜 256 KiB | 強制切り出し閾値                                         |
+| ローリングウィンドウ | `WINDOW_SIZE` | **48 バイト**           | 固定              | ハッシュ計算用ウィンドウ                                 |
+| 正規化マスク1        | `MASK_S`      | `0x0000d90003510000ULL` | -                 | `MIN_SIZE` 〜 `AVG_SIZE` 用の厳格マスク (約13ビット立て) |
+| 正規化マスク2        | `MASK_L`      | `0x0000d90000000000ULL` | -                 | `AVG_SIZE` 〜 `MAX_SIZE` 用の緩和マスク (約9ビット立て)  |
 
 ## 1.2 Gear Hash テーブル (256 x 64-bit uint)
 Gear Hash は 256 個の 64 ビット擬似乱数表 `GEAR_TABLE` を用いて高速にローリングハッシュを計算する。
@@ -318,3 +318,91 @@ $S \ge \text{renameThreshold}$（デフォルト: **0.65**）の場合に `MOVE 
 
 ## 8.2 Shallow `fsck` 検証ルール
 - `sfvcs fsck` 実行時、通常のコミットオブジェクト検証では全 Parent Commit CID の存在を必須とするが、`.sfvcs/shallow` に記載されたコミット CID については **「Parent Commit 非存在」を正常（Missing Parent Allowed）** として扱い、検証エラーを抑制する。
+
+---
+
+# 9. Bisect (二分探索バグ特定) アルゴリズム
+
+有向非巡回グラフ (DAG) であるコミット履歴木から、問題を引き起こした最初のコミットを二分探索で効率的に特定するアルゴリズム。
+
+## 9.1 中点 (Mid-point) 選定計算式
+「Bad」と判定されたコミット $B$ と「Good」と判定されたコミット群 $G_1, G_2, \dots$ に対し、未検証の到達可能コミット集合 $U$ を抽出する。各コミット $c \in U$ について、その子孫数 $D(c)$ を計算し、以下の重み関数 $W(c)$ を最小化するコミット $c_{\text{mid}}$ を次の検証対象（Mid-point）として選定する。
+
+$$W(c) = \left| D(c) - \frac{|U|}{2} \right|$$
+
+```python
+def find_bisect_midpoint(bad_commit: CID, good_commits: Set[CID], skipped_commits: Set[CID]) -> CID:
+    # 1. Bad から到達可能で Good から到達不能な未検証コミット集合 U を抽出
+    ancestors_bad = get_all_ancestors(bad_commit)
+    ancestors_good = set()
+    for g in good_commits:
+        ancestors_good.update(get_all_ancestors(g))
+    
+    untested_candidates = ancestors_bad - ancestors_good - skipped_commits
+    if not untested_candidates:
+        return bad_commit
+
+    total_count = len(untested_candidates)
+    best_commit = None
+    min_diff = float('inf')
+
+    # 2. 各ノードの下位子孫数を計算し半数 (|U| / 2) に最も近いノードを選択
+    for candidate in untested_candidates:
+        descendant_count = count_descendants_in_set(candidate, untested_candidates)
+        diff = abs(descendant_count - (total_count / 2))
+        if diff < min_diff:
+            min_diff = diff
+            best_commit = candidate
+
+    return best_commit
+```
+
+---
+
+# 10. Blame (行単位履歴・著者追跡) アルゴリズム
+
+ファイル内の全行に対し、該当行を最後に変更・追加したコミット CID、著者、タイムスタンプを算出するアルゴリズム。
+
+## 10.1 Prolly Tree & Winnowing 指紋アライメントによる追跡
+1. 対象コミット $C$ から親コミット $P$ へ逆方向に対向比較を実行。
+2. `SFSQ` Sequence Tree アライメントにより不一致 Chunk 区間を特定。
+3. ファイルがリネームまたは別ファイルへ移動している場合、第 5 節の Winnowing Fingerprint 類似度検索を実行して同一プロバナンス行として追跡を継続。
+4. 親コミット $P$ に存在しない行をコミット $C$ の寄与として確定し、親 $P$ へ再帰下降。
+
+---
+
+# 11. Pathspec Trie ($O(K)$ プレフィックスツリー) 検索アルゴリズム
+
+`.sfvcsignore` や `.sfvcsattributes` の大量のワイルドカードパターンに対し、走査パス $P$ を $O(K)$ ($K$ はパス文字列長) で高速マッチングする Prefix Trie アルゴリズム。
+
+```python
+class PathspecTrieNode:
+    def __init__(self):
+        self.children = {} # char -> PathspecTrieNode
+        self.rules = []    # マッチするルール情報
+
+def match_pathspec_trie(root: PathspecTrieNode, path: str) -> List[Rule]:
+    current = root
+    matched_rules = []
+    
+    for char in path:
+        if char in current.children:
+            current = current.children[char]
+            if current.rules:
+                matched_rules.extend(current.rules)
+        else:
+            break
+            
+    return matched_rules
+```
+
+---
+
+# 12. サブモジュール (`ENTRY_SUBMODULE`) 再帰的操作アルゴリズム
+
+親リポジトリとネストされた配下リポジトリ (`ENTRY_SUBMODULE`: `0x04`) 間の決定論的連携アルゴリズム。
+
+1. **Recursive Fetch / Checkout**:
+   親リポジトリの `Directory Node` (`SFDR`) を走査し、`ENTRY_SUBMODULE` エントリを検出した場合、配下の `.sfvcs/modules/<submodule_name>/` から対象 Commit CID を再帰的にチェックアウト。
+2. **Submodule Status**:
+   サブモジュールディレクトリの現在の `HEAD` CID と、親 Directory Node に記録されたターゲット CID を比較し、`SUBMODULE_DIRTY`（内部未コミット変更あり）または `SUBMODULE_MOVED`（参照コミット不一致）を検出。

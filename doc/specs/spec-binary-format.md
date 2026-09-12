@@ -62,14 +62,14 @@
 ```
 
 ## 2.2 ドメインタグ一覧
-| オブジェクト種別 | ドメインタグ (ASCII 4 bytes) | Format Version | 説明 |
-|---|---|---|---|
-| Chunk | `SFCK` | `0x01` | 生バイトデータチャンク |
-| Sequence Node | `SFSQ` | `0x01` | ファイル内容のシーケンス木ノード |
-| File Node | `SFFL` | `0x01` | ファイルメタデータおよびシーケンスルート参照 |
-| Directory Node| `SFDR` | `0x01` | ディレクトリエントリ集合 |
-| Commit | `SFCM` | `0x01` | コミットオブジェクト |
-| Symlink | `SFSL` | `0x01` | シンボリックリンク |
+| オブジェクト種別 | ドメインタグ (ASCII 4 bytes) | Format Version | 説明                                         |
+| ---------------- | ---------------------------- | -------------- | -------------------------------------------- |
+| Chunk            | `SFCK`                       | `0x01`         | 生バイトデータチャンク                       |
+| Sequence Node    | `SFSQ`                       | `0x01`         | ファイル内容のシーケンス木ノード             |
+| File Node        | `SFFL`                       | `0x01`         | ファイルメタデータおよびシーケンスルート参照 |
+| Directory Node   | `SFDR`                       | `0x01`         | ディレクトリエントリ集合                     |
+| Commit           | `SFCM`                       | `0x01`         | コミットオブジェクト                         |
+| Symlink          | `SFSL`                       | `0x01`         | シンボリックリンク                           |
 
 ## 2.3 CID 計算式
 ```
@@ -179,6 +179,10 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 - `0x01` (`CONTENT_SEQUENCE_ROOT`):
   - 1,024 バイト超の通常ファイル。
   - Payload 構造: `[content_root_cid: 33 bytes]` (SFSQ または SFCK の CID)
+- `0x02` (`CONTENT_LFS_POINTER`):
+  - 大容量バイナリ資産（sfvcs LFS）向けポインタ。
+  - Payload 構造: `[lfs_oid_algo: uint8][lfs_oid_bytes: 32 bytes][size_uint64: uint64]`
+  - ローカルオブジェクトストアではなく LFS 外部ストア上のコンテンツを参照する。
 
 ---
 
@@ -283,3 +287,53 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
    - Directory の `ENTRY_SUBMODULE` は対象リポジトリの `SFCM` (Commit) オブジェクトの CID を指していなければならない。
    - Sequence Node の `FLAG_LEAF_CHILDREN` 時、全参照先 CID は `SFCK` オブジェクトでなければならない。
 5. **電子署名検証**: 署名が付与されているコミットオブジェクトについて、公開鍵または信頼できるキーリングと照合して改ざんがないことを確認すること。
+
+---
+
+# 5. LFS ポインタオブジェクト・キーリング・鍵失効リスト (CRL) フォーマット
+
+## 5.1 LFS ポインタテキスト/バイナリ規格
+`CONTENT_LFS_POINTER` (`0x02`) を持つ `SFFL` ファイルオブジェクトは、以下の正規化テキスト表現（LFS Pointer File）としても可読出力可能とする。
+
+```
+version https://sfvcs.io/spec/lfs/v1
+oid blake3:023a4f8901234567890123456789012345678901234567890123456789012345
+size 1073741824
+```
+
+## 5.2 信頼キーリング (Trust Keyring) バイナリ形式
+電子署名検証用の公開鍵集合を保持する `.sfvcs/keyring` バイナリレイアウト。
+
+```
++-------------------------------------------------------+
+| Magic "SFKR" (4 bytes)                                |
++-------------------------------------------------------+
+| Format Version: 0x01 (uint8)                          |
++-------------------------------------------------------+
+| Key Count (varint)                                    |
++-------------------------------------------------------+
+| Key Entries (キーID昇順ソート済み):                      |
+|   - Key ID Length (varint)                            |
+|   - Key ID Bytes (UTF-8, Key Fingerprint)             |
+|   - Key Type (0x01: Ed25519, 0x02: RSA, 0x03: ECDSA)  |
+|   - Public Key Bytes Length (varint)                  |
+|   - Public Key Raw Bytes                              |
++-------------------------------------------------------+
+```
+
+## 5.3 鍵失効リスト (CRL: Certificate/Key Revocation List) 形式
+失効したコミット署名鍵のインデックスを保持する `.sfvcs/crl` 構造。
+
+```
++-------------------------------------------------------+
+| Magic "SFRL" (4 bytes)                                |
++-------------------------------------------------------+
+| Format Version: 0x01 (uint8)                          |
++-------------------------------------------------------+
+| Revoked Key Count (varint)                            |
++-------------------------------------------------------+
+| Revoked Key Fingerprints (32 bytes x Count)           |
++-------------------------------------------------------+
+| Revocation Reason Code Array (uint8 x Count)          |
++-------------------------------------------------------+
+```

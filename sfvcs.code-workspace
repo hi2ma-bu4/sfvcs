@@ -12,9 +12,12 @@
 			"Fanout",
 			"Jaccard",
 			"Packfile",
+			"Pathspec",
 			"Prolly",
 			"Reflog",
+			"SATB",
 			"SFBM",
+			"SFCG",
 			"SFCK",
 			"SFCM",
 			"SFDR",
@@ -29,6 +32,7 @@
 			"sfvcsignore",
 			"SPIX",
 			"varint",
+			"VCDIFF",
 			"xattr"
 		]
 	}

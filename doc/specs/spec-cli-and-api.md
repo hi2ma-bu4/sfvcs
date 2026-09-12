@@ -145,7 +145,44 @@
 
 ---
 
-## 1.11 `sfvcs fsck`
+## 1.11 `sfvcs bisect`
+二分探索によってバグの発生コミットを自動特定する。
+
+- **構文**: `sfvcs bisect [start|bad|good|skip|reset|run]`
+- **サブコマンド**:
+  - `sfvcs bisect start [<bad> [<good>...]]`: bisect セッションの開始。
+  - `sfvcs bisect bad [<commit>]`: 指定コミットを問題あり（Bad）とマーク。
+  - `sfvcs bisect good [<commit>]`: 指定コミットを問題なし（Good）とマーク。
+  - `sfvcs bisect skip [<commit>]`: テスト不可能等のコミットをスキップ。
+  - `sfvcs bisect reset`: bisect を終了し元の HEAD ブランチへ復帰。
+  - `sfvcs bisect run <cmd> [args...]`: テストスクリプト（終了コード 0: Good, 1-127: Bad）を自動実行して判定。
+
+---
+
+## 1.12 `sfvcs blame`
+ファイルの各行に対する最終変更コミット、著者、タイムスタンプを表示する。
+
+- **構文**: `sfvcs blame <file> [options]`
+- **オプション**:
+  - `-L <start>,<end>`: 指定行範囲（例: `-L 10,25`）のみ追跡。
+  - `-M`: 同一ファイル内の移動・コピー行を追跡。
+  - `-C`: 他ファイルからの移動・コピー行（Winnowing Fingerprint アライメント）を追跡。
+  - `--json`: 機械可読な JSON 形式でプロバナンス情報を出力。
+
+---
+
+## 1.13 `sfvcs submodule`
+ネストされた外部/内部リポジトリ (`ENTRY_SUBMODULE`: `0x04`) を管理する。
+
+- **構文**: `sfvcs submodule [add|status|init|update|sync]`
+- **サブコマンド・オプション**:
+  - `add <url> [<path>]`: サブモジュールを追加。
+  - `status`: 各サブモジュールのコミット不一致・dirty 状態を表示。
+  - `update [--recursive]`: 親リポジトリに記録された CID へサブモジュールを同期更新。
+
+---
+
+## 1.14 `sfvcs fsck`
 リポジトリ内の全オブジェクトの暗号学的整合性および参照構造を完全検証する。
 
 - **構文**: `sfvcs fsck [options]`
@@ -156,7 +193,7 @@
 
 ---
 
-## 1.12 `sfvcs repack` / `sfvcs gc`
+## 1.15 `sfvcs repack` / `sfvcs gc`
 ルーズオブジェクトをパックファイルに集約し、不要オブジェクトを掃除する。
 
 - **構文**: `sfvcs gc [options]`
@@ -201,6 +238,15 @@ export class Repository {
   /** Multi-resolution Diff 実行 */
   async diff(oldCommitOrTree: Uint8Array, newCommitOrTree: Uint8Array, options?: DiffOptions): Promise<DiffResult>;
 
+  /** Bisect 自動バグ特定 */
+  async bisect(action: 'start' | 'bad' | 'good' | 'skip' | 'reset' | 'run', options?: BisectOptions): Promise<BisectResult>;
+
+  /** Blame 行単位追跡 */
+  async blame(filePath: string, options?: BlameOptions): Promise<BlameResult>;
+
+  /** サブモジュール操作 */
+  async submodule(action: 'add' | 'status' | 'update' | 'sync', options?: SubmoduleOptions): Promise<SubmoduleResult>;
+
   /** 整合性検査 */
   async fsck(): Promise<FsckReport>;
 }
@@ -212,12 +258,12 @@ export class Repository {
 
 すべてのシステムエラーは、以下の共通基底クラス `SfvcsError` を継承し、固有の `code` を付与する。
 
-| エラーコード (code) | クラス名 | 発生条件 | 対処方法 |
-|---|---|---|---|
-| `ERR_MISSING_OBJECT` | `MissingObjectError` | 指定された CID が objects (loose/pack) 内に存在しない | `fsck` で影響範囲確認、リモート等から再取得 |
-| `ERR_CORRUPT_OBJECT` | `CorruptObjectError` | オブジェクトの計算 CID が記載 CID と不一致 | バックアップからの復元、またはオブジェクト破棄 |
-| `ERR_INVALID_CANONICAL_FORMAT` | `InvalidFormatError` | ディレクトリエントリ未ソート、または未知の Format Version | 正しい仕様でエンコードされたオブジェクトへ更新 |
-| `ERR_MERGE_CONFLICT` | `MergeConflictError` | 自動合流不可能なファイル競合を検出 | コンフリクトマーカーの修正後 `commit` |
-| `ERR_CYCLE_DETECTED` | `CycleDetectedError` | Tree Move による循環参照移動を検出 | 自動決定論解決またはユーザー手動指定 |
-| `ERR_CONCURRENT_UPDATE` | `ConcurrentUpdateError` | CAS 参照更新時に他プロセスとの書き込み競合を検出 | リトライ処理の実行 |
-| `ERR_REPOSITORY_LOCKED` | `RepositoryLockedError` | `.sfvcs/locks/` 内にロックファイルが存在 | 他プロセスの終了待機、または不要ロック削除 |
+| エラーコード (code)            | クラス名                | 発生条件                                                  | 対処方法                                       |
+| ------------------------------ | ----------------------- | --------------------------------------------------------- | ---------------------------------------------- |
+| `ERR_MISSING_OBJECT`           | `MissingObjectError`    | 指定された CID が objects (loose/pack) 内に存在しない     | `fsck` で影響範囲確認、リモート等から再取得    |
+| `ERR_CORRUPT_OBJECT`           | `CorruptObjectError`    | オブジェクトの計算 CID が記載 CID と不一致                | バックアップからの復元、またはオブジェクト破棄 |
+| `ERR_INVALID_CANONICAL_FORMAT` | `InvalidFormatError`    | ディレクトリエントリ未ソート、または未知の Format Version | 正しい仕様でエンコードされたオブジェクトへ更新 |
+| `ERR_MERGE_CONFLICT`           | `MergeConflictError`    | 自動合流不可能なファイル競合を検出                        | コンフリクトマーカーの修正後 `commit`          |
+| `ERR_CYCLE_DETECTED`           | `CycleDetectedError`    | Tree Move による循環参照移動を検出                        | 自動決定論解決またはユーザー手動指定           |
+| `ERR_CONCURRENT_UPDATE`        | `ConcurrentUpdateError` | CAS 参照更新時に他プロセスとの書き込み競合を検出          | リトライ処理の実行                             |
+| `ERR_REPOSITORY_LOCKED`        | `RepositoryLockedError` | `.sfvcs/locks/` 内にロックファイルが存在                  | 他プロセスの終了待機、または不要ロック削除     |

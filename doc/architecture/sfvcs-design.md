@@ -15,13 +15,13 @@
 詳細なバイナリレイアウト、具体アルゴリズムの擬似コード、パックファイル物理フォーマット、および CLI/API インターフェースについては、以下の専用詳細仕様書を参照すること。
 
 - **[バイナリフォーマット・カノニカルシリアライズ詳細仕様書](../specs/spec-binary-format.md)** (`doc/specs/spec-binary-format.md`)
-- **[アルゴリズム詳細仕様書 (FastCDC, Prolly Tree, Diff, Line Offset, Move/Rename最適化)](../specs/spec-algorithms.md)** (`doc/specs/spec-algorithms.md`)
-- **[ストレージ構造・パックファイル・Index・Reflog詳細仕様書](../specs/spec-storage.md)** (`doc/specs/spec-storage.md`)
-- **[3-Way Structural Merge ・ CRDT 競合解決詳細仕様書](../specs/spec-merge.md)** (`doc/specs/spec-merge.md`)
-- **[リモート同期 ・ Wire Protocol 詳細仕様書](../specs/spec-network.md)** (`doc/specs/spec-network.md`)
-- **[仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB) 詳細仕様書](../specs/spec-virtual-vcs.md)** (`doc/specs/spec-virtual-vcs.md`)
+- **[アルゴリズム詳細仕様書 (FastCDC, Prolly Tree, Diff, Line Offset, Move/Rename最適化, Bisect, Blame, Submodule, Pathspec Trie)](../specs/spec-algorithms.md)** (`doc/specs/spec-algorithms.md`)
+- **[ストレージ構造・パックファイル・Index・Commit Graph・LFS・VCDIFF・Tri-color GC詳細仕様書](../specs/spec-storage.md)** (`doc/specs/spec-storage.md`)
+- **[3-Way Structural Merge ・ CRDT 競合解決 ・ 汎用構造化マージ詳細仕様書](../specs/spec-merge.md)** (`doc/specs/spec-merge.md`)
+- **[リモート同期 ・ Wire Protocol ・ LFS 転送詳細仕様書](../specs/spec-network.md)** (`doc/specs/spec-network.md`)
+- **[仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB/WebCrypto/暗号化/CRDT/WASMプラグイン) 詳細仕様書](../specs/spec-virtual-vcs.md)** (`doc/specs/spec-virtual-vcs.md`)
 - **[設定ファイル・Ignore・属性詳細仕様書 (.sfvcsconfig, .sfvcsignore, .sfvcsattributes)](../specs/spec-config-and-attributes.md)** (`doc/specs/spec-config-and-attributes.md`)
-- **[CLI コマンド・Core API・エラー処理詳細仕様書](../specs/spec-cli-and-api.md)** (`doc/specs/spec-cli-and-api.md`)
+- **[CLI コマンド・Submodule・Bisect・Blame・Core API・エラー処理詳細仕様書](../specs/spec-cli-and-api.md)** (`doc/specs/spec-cli-and-api.md`)
 - **[ドキュメント命名・構造・記述ルール](../rules/doc-naming-rules.md)** (`doc/rules/doc-naming-rules.md`)
 
 本書では、現時点で確定した設計と、研究・実験によって今後変更する可能性がある設計を明確に区別する。
@@ -4871,20 +4871,20 @@ repository全体を単一の巨大objectとして扱わず、
 
 参考資料は以下のカテゴリに分類する。
 
-| 資料 | 主な用途 |
-|---|---|
-| Driscoll et al. | Persistent Data Structure |
-| Noms | Prolly Tree / recursive chunking |
-| FastCDC | Leaf CDC |
-| Dolt | Chunk distribution / Prolly Tree実用化 |
-| prolly | 現行Prolly Tree実装比較 |
-| lakeFS | Recursive Merkle / snapshot sharing |
-| Cacciari Miraldo & Swierstra | Structural Diff |
-| Falleri et al. | Move-aware Diff |
-| Nugroho et al. | Diff algorithm comparison |
-| Kleppmann et al. | Tree Move semantics |
-| CARMOT | Versioned state / 3-way merge |
-| SirixDB | Persistent tree / append-only storage |
+| 資料                         | 主な用途                               |
+| ---------------------------- | -------------------------------------- |
+| Driscoll et al.              | Persistent Data Structure              |
+| Noms                         | Prolly Tree / recursive chunking       |
+| FastCDC                      | Leaf CDC                               |
+| Dolt                         | Chunk distribution / Prolly Tree実用化 |
+| prolly                       | 現行Prolly Tree実装比較                |
+| lakeFS                       | Recursive Merkle / snapshot sharing    |
+| Cacciari Miraldo & Swierstra | Structural Diff                        |
+| Falleri et al.               | Move-aware Diff                        |
+| Nugroho et al.               | Diff algorithm comparison              |
+| Kleppmann et al.             | Tree Move semantics                    |
+| CARMOT                       | Versioned state / 3-way merge          |
+| SirixDB                      | Persistent tree / append-only storage  |
 
 ---
 
@@ -4954,3 +4954,46 @@ repository全体を単一の巨大objectとして扱わず、
 - snapshot storage
 - garbage collection
 - three-way merge
+
+---
+
+# 171. 拡張アーキテクチャ要件および高度設計仕様
+
+本節では、大規模リポジトリ、ブラウザ仮想環境、大容量資産、および高効率コミットグラフ走査における高度な機能拡張アーキテクチャ方針を定義する。
+
+## 171.1 Bisect（二分探索バグ特定）および Blame（行単位追跡）
+- **Bisect**: 有向非巡回コミットグラフ（DAG）におけるトポロジカルソートと親コミット比率計算に基づき、二分探索で回帰バグ発生コミットを $O(\log C)$ で特定。
+- **Blame**: Prolly Tree の Sequence Node アライメントおよび Winnowing Fingerprint を用いて、ファイル跨ぎの MOVE/RENAME を追跡しながら行単位の著者・コミット provenance を算出。
+
+## 171.2 Commit Graph インデックス構造
+- `.sfvcs/objects/info/commit-graph` バイナリ形式により、コミットの世代番号（Generation Numbers / Corrected Commit Date）およびパス変更 Reachability Bloom Filter を保持。コミット履歴探索および Merge Base 計算を高速化。
+
+## 171.3 大容量バイナリ資産管理 (sfvcs LFS)
+- ギガバイト級のメディア・データセット等に対して、`File Node` 内に `CONTENT_LFS_POINTER` 構造を採用し、ローカルオブジェクトストアの肥大化を防止。外部ストレージ連携および Range Request ストリーミング転送をサポート。
+
+## 171.4 ゼロ知識・リポジトリ暗号化 (Encryption-at-Rest)
+- 外部リモートサーバーや IndexedDB / OPFS に保存する際、クライアント側で AES-256-GCM または XChaCha20-Poly1305 によりチャンク Payload を暗号化。マスターキー・鍵暗号化キー（KEK）・データ暗号化キー（DEK）のエンベロープ暗号化を採用。
+
+## 171.5 バイナリデルタ圧縮規格 (VCDIFF / RFC 3284)
+- パックファイル内の Thin Delta 圧縮において、RFC 3284 VCDIFF 規格準拠の Copy / Insert / Run 命令バイトコードを採用。大容量チャンク間の共通差分を高圧縮率で生成。
+
+## 171.6 汎用言語非依存セマンティック 3-Way Merge
+- JSON, YAML, TOML, Lockfile 等の構造化設定ファイルに対し、特定プログラミング言語に依存しない木構造・キーバリュースキーマベースのセマンティック統合アルゴリズムを適用。
+
+## 171.7 ロックフリー並列 GC (Tri-Color Marking with Write Barrier)
+- メインプロセスおよび Web Worker と並行してバックグラウンド GC を実行可能にするため、SATB (Snapshot-At-The-Beginning) 書き込みバリアを備えた三色（White, Grey, Black）マークアンドスウィープアルゴリズムを採用。
+
+## 171.8 リアルタイム協調編集 (Fugue Sequence CRDT)
+- Web ブラウザ上のオンライン IDE 等において、Prolly Tree Sequence Node と Fugue Sequence CRDT の状態ベクトルを統合し、スナップショット作成前の複数ユーザーリアルタイム並行編集を決定論的にアライメント。
+
+## 171.9 Sparse Index および Pathspec Trie 検索高速化
+- パス無視・属性判定を Prefix Trie (Pathspec Trie) で $O(K)$ 実行。`.sfvcs/index` 内に `Sparse Index` ディレクトリプレースホルダー CID を導入し、未変更サブツリー展開を $O(1)$ スキップ。
+
+## 171.10 マルチリポジトリ・サブモジュール拡張
+- `ENTRY_SUBMODULE` の再帰的 fetch / diff / merge、並びに Sparse Submodule Clone プロトコルによる大規模ワークスペース統合。
+
+## 171.11 WASM サンドボックスプラグインおよびサーバーフック
+- Web ブラウザ環境用の WASM サンドボックス拡張機能、および `pre-receive` / `update` / `post-receive` / `proc-receive` サーバーフックを定義。
+
+## 171.12 キーリング管理および鍵失効リスト (CRL)
+- 電子署名用 WebCrypto / GPG / Ed25519 鍵の信頼ストア、鍵失効リスト (CRL) 検証、および鍵ローテーション手順。

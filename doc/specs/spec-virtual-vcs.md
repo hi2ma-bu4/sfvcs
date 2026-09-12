@@ -206,3 +206,39 @@ Web ブラウザのメインスレッド（UI スレッド）のフリーズを�
 2. **`@sfvcs/wasm`**: FastCDC、BLAKE3、Winnowing Fingerprint 高速化用 WebAssembly モジュール。
 3. **`@sfvcs/adapter-browser`**: `IndexedDB`, `OPFS`, `WebCrypto`, `CompressionStream` アダプタ集。
 4. **`@sfvcs/adapter-node`**: `node:fs`, `node:crypto`, `node:zlib` アダプタ集。
+
+---
+
+# 7. クライアントサイド暗号化ストレージ (Encryption-at-Rest) 仕様
+
+Untrusted サーバーやブラウザ内 `IndexedDB` / `OPFS` への保存時、情報漏洩を防ぐゼロ知識（Zero-Knowledge）暗号化ストレージアダプタ `EncryptedStorageAdapter` 仕様。
+
+## 7.1 エンベロープ暗号化 (Envelope Encryption) 鍵構造
+1. **Passphrase / Master Key**: ユーザーパスフレーズから **Argon2id** (Memory: 64MB, Iterations: 3, Parallelism: 4) により Key Encryption Key (KEK) を派生。
+2. **Data Encryption Key (DEK)**: ランダム生成された 256bit **AES-256-GCM** または **XChaCha20-Poly1305** 鍵。
+3. **Chunk Payload Encrypted Layout**:
+   ```
+   [IV / Nonce (12 or 24 bytes)][Encrypted Payload][Auth Tag (16 bytes)]
+   ```
+
+---
+
+# 8. WebAssembly サンドボックスプラグインアーキテクチャ
+
+ブラウザや非信頼サーバー環境において、サードパーティ製フックやカスタム Diff ドライバーを安全に隔離実行する WASM プラグイン仕様。
+
+```typescript
+export interface WasmPluginAdapter {
+  /** WASM モジュールのインスタンス化およびサンドボックスメモリ初期化 */
+  loadPlugin(wasmBytes: Uint8Array, config?: Record<string, unknown>): Promise<WasmInstance>;
+
+  /** カスタムフック (pre-commit / pre-push) のサンドボックス実行 */
+  executeHook(hookName: string, context: HookContext): Promise<HookResult>;
+}
+```
+
+---
+
+# 9. 鍵失効リスト (CRL) 検証および鍵ローテーション手順
+
+`WebCryptoSigner` における電子署名検証時、対象の公開鍵 Fingerprint が `.sfvcs/crl` (失効リスト) 内に含まれる場合、検証ステータスを `REVOKED_KEY_ERROR` と判定して拒否する。失効した鍵は新しく生成した Ed25519 鍵ペアへアトミックにローテーション更新する。

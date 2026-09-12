@@ -11,12 +11,12 @@
 ## 1.1 階層的 Fast-Path スキップ
 すべてのオブジェクトが Content ID (CID) を持つ不変構造であることを利用し、マージ処理は階層（Directory Node -> File Node -> Sequence Node -> Chunk）ごとに以下の $O(1)$ Fast-Path 判定を適用する。
 
-| 条件 | 判定結果 | 適用アクション | 計算量 |
-|---|---|---|---|
-| `Ours_CID == Theirs_CID` | 一致 (No conflict) | `Ours_CID` (または `Theirs_CID`) をそのまま採用 | $O(1)$ |
-| `Base_CID == Ours_CID` かつ `Base_CID != Theirs_CID` | Theirs のみ変更 | `Theirs_CID` を採用 | $O(1)$ |
-| `Base_CID != Ours_CID` かつ `Base_CID == Theirs_CID` | Ours のみ変更 | `Ours_CID` を採用 | $O(1)$ |
-| `Base_CID != Ours_CID` かつ `Base_CID != Theirs_CID` かつ `Ours_CID != Theirs_CID` | 双方が異なって変更 | 下位ノードへ解像度を下げて再帰降下比較 | 下位走査 |
+| 条件                                                                               | 判定結果           | 適用アクション                                  | 計算量   |
+| ---------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------- | -------- |
+| `Ours_CID == Theirs_CID`                                                           | 一致 (No conflict) | `Ours_CID` (または `Theirs_CID`) をそのまま採用 | $O(1)$   |
+| `Base_CID == Ours_CID` かつ `Base_CID != Theirs_CID`                               | Theirs のみ変更    | `Theirs_CID` を採用                             | $O(1)$   |
+| `Base_CID != Ours_CID` かつ `Base_CID == Theirs_CID`                               | Ours のみ変更      | `Ours_CID` を採用                               | $O(1)$   |
+| `Base_CID != Ours_CID` かつ `Base_CID != Theirs_CID` かつ `Ours_CID != Theirs_CID` | 双方が異なって変更 | 下位ノードへ解像度を下げて再帰降下比較          | 下位走査 |
 
 ---
 
@@ -26,19 +26,19 @@
 
 ## 2.1 エントリ変更マトリクス
 
-| Base エントリ | Ours エントリ | Theirs エントリ | 結果アクション | 競合 (Conflict) |
-|---|---|---|---|---|
-| A | A | B | B を採用 | なし |
-| A | B | A | B を採用 | なし |
-| A | B | B | B を採用 (同一変更) | なし |
-| A | Deleted | A | 削除 (Deleted) | なし |
-| A | A | Deleted | 削除 (Deleted) | なし |
-| A | B (Modified) | Deleted | **Modify/Delete 競合** | あり |
-| A | Deleted | C (Modified) | **Delete/Modify 競合** | あり |
-| A | B (Modified) | C (Modified) | 3-way Sequence Merge 実行 | 内容次第 |
-| None | B (Added) | None | B を追加 | なし |
-| None | None | C (Added) | C を追加 | なし |
-| None | B (Added) | C (Added, 同一パス) | **Add/Add 同一パス競合** | あり (`B.CID != C.CID`) |
+| Base エントリ | Ours エントリ | Theirs エントリ     | 結果アクション            | 競合 (Conflict)         |
+| ------------- | ------------- | ------------------- | ------------------------- | ----------------------- |
+| A             | A             | B                   | B を採用                  | なし                    |
+| A             | B             | A                   | B を採用                  | なし                    |
+| A             | B             | B                   | B を採用 (同一変更)       | なし                    |
+| A             | Deleted       | A                   | 削除 (Deleted)            | なし                    |
+| A             | A             | Deleted             | 削除 (Deleted)            | なし                    |
+| A             | B (Modified)  | Deleted             | **Modify/Delete 競合**    | あり                    |
+| A             | Deleted       | C (Modified)        | **Delete/Modify 競合**    | あり                    |
+| A             | B (Modified)  | C (Modified)        | 3-way Sequence Merge 実行 | 内容次第                |
+| None          | B (Added)     | None                | B を追加                  | なし                    |
+| None          | None          | C (Added)           | C を追加                  | なし                    |
+| None          | B (Added)     | C (Added, 同一パス) | **Add/Add 同一パス競合**  | あり (`B.CID != C.CID`) |
 
 ---
 
@@ -103,15 +103,15 @@ const timeout = 10000;
 ## 5.2 構造コンフリクトファイルおよび状態永続化ファイル (State Machine Files)
 マージ、リベース、チェリーピック、チェンジ退避等の中断・コンフリクト未完了状態の永続化およびステートマシン制御は、`.sfvcs/` 配下の以下の専用状態ファイルによって管理される。
 
-| ファイルパス | 役割・格納データ | 削除・クリーンアップタイミング |
-|---|---|---|
-| `.sfvcs/MERGE_HEAD` | マージ対象の Theirs Commit CID (33bytes) | `sfvcs commit` または `sfvcs merge --abort` 完了時 |
-| `.sfvcs/MERGE_MSG` | マージコミット用メッセージ案（コンフリクト一覧および Tree Move 解決ログ含む） | マージコミット完了時 |
-| `.sfvcs/REBASE_HEAD` | Rebase 中の元の HEAD Commit CID | `sfvcs rebase --continue` 完了時または `--abort` 時 |
-| `.sfvcs/rebase-merge/` | Rebase の進行状態データ（適用コミットキュー、現在のパッチ index、`onto` Commit CID） | Rebase シーケンス完了時 |
-| `.sfvcs/CHERRY_PICK_HEAD` | 現在 Cherry-Pick 実行中の Commit CID | Cherry-Pick 完了時または `--abort` 時 |
-| `.sfvcs/REVERT_HEAD` | 現在 Revert 実行中の Commit CID | Revert 完了時または `--abort` 時 |
-| `.sfvcs/STASH_DIR` | Stash スタックオブジェクトのデータディレクトリ | `sfvcs stash drop` または `clear` 実行時 |
+| ファイルパス              | 役割・格納データ                                                                     | 削除・クリーンアップタイミング                      |
+| ------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| `.sfvcs/MERGE_HEAD`       | マージ対象の Theirs Commit CID (33bytes)                                             | `sfvcs commit` または `sfvcs merge --abort` 完了時  |
+| `.sfvcs/MERGE_MSG`        | マージコミット用メッセージ案（コンフリクト一覧および Tree Move 解決ログ含む）        | マージコミット完了時                                |
+| `.sfvcs/REBASE_HEAD`      | Rebase 中の元の HEAD Commit CID                                                      | `sfvcs rebase --continue` 完了時または `--abort` 時 |
+| `.sfvcs/rebase-merge/`    | Rebase の進行状態データ（適用コミットキュー、現在のパッチ index、`onto` Commit CID） | Rebase シーケンス完了時                             |
+| `.sfvcs/CHERRY_PICK_HEAD` | 現在 Cherry-Pick 実行中の Commit CID                                                 | Cherry-Pick 完了時または `--abort` 時               |
+| `.sfvcs/REVERT_HEAD`      | 現在 Revert 実行中の Commit CID                                                      | Revert 完了時または `--abort` 時                    |
+| `.sfvcs/STASH_DIR`        | Stash スタックオブジェクトのデータディレクトリ                                       | `sfvcs stash drop` または `clear` 実行時            |
 
 ---
 
@@ -139,3 +139,23 @@ const timeout = 10000;
 1. 打消し対象コミット $C$ とその親コミット $P = \text{Parent}(C)$ を特定。
 2. 逆向き 3-Way Merge 実行: `Base = C`, `Ours = HEAD`, `Theirs = P`。
 3. マージ結果を新コミット（Revert Commit）として記録。
+
+---
+
+# 7. 汎用言語非依存セマンティック 3-Way Structural Merge (JSON/YAML/Lockfile/TOML)
+
+設定ファイルや依存関係ロックファイル (`package-lock.json`, `Cargo.lock` 等) の行単位差分による競合を防止するため、プログラミング言語に依存しない抽象構造ツリー（Abstract Structure Tree: Key-Value Map / Sequence List / Scalar）に対するセマンティック 3-Way マージアルゴリズムを定義する。
+
+## 7.1 キーバリューマップ (Key-Value Map) マージルール
+Base, Ours, Theirs のマップ構造 $M_{\text{base}}, M_{\text{ours}}, M_{\text{theirs}}$ の各キー $k$ について：
+- $k \in M_{\text{ours}}$ かつ $k \notin M_{\text{theirs}}$（Ours 追加・Theirs なし） $\rightarrow$ $M_{\text{result}}[k] = M_{\text{ours}}[k]$
+- $k \notin M_{\text{ours}}$ かつ $k \in M_{\text{theirs}}$（Theirs 追加・Ours なし） $\rightarrow$ $M_{\text{result}}[k] = M_{\text{theirs}}[k]$
+- $M_{\text{ours}}[k] == M_{\text{base}}[k]$ かつ $M_{\text{theirs}}[k] != M_{\text{base}}[k]$ $\rightarrow$ $M_{\text{result}}[k] = M_{\text{theirs}}[k]$
+- $M_{\text{ours}}[k] != M_{\text{base}}[k]$ かつ $M_{\text{theirs}}[k] == M_{\text{base}}[k]$ $\rightarrow$ $M_{\text{result}}[k] = M_{\text{ours}}[k]$
+- $M_{\text{ours}}[k] != M_{\text{theirs}}[k]$（異なって変更） $\rightarrow$ 下位再帰 3-Way マージ実行（値がスカラの場合は Structural Conflict）
+
+---
+
+# 8. Fugue Sequence CRDT リアルタイム協調編集アライメント
+
+スナップショット生成前のリアルタイム並行編集（Web IDE 協調等）において、Prolly Tree Sequence Node の子要素列と Fugue CRDT の可逆状態ベクトルを統合し、非インタラクティブな確定アライメントを実現する。
