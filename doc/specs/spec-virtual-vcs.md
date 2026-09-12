@@ -242,3 +242,31 @@ export interface WasmPluginAdapter {
 # 9. 鍵失効リスト (CRL) 検証および鍵ローテーション手順
 
 `WebCryptoSigner` における電子署名検証時、対象の公開鍵 Fingerprint が `.sfvcs/crl` (失効リスト) 内に含まれる場合、検証ステータスを `REVOKED_KEY_ERROR` と判定して拒否する。失効した鍵は新しく生成した Ed25519 鍵ペアへアトミックにローテーション更新する。
+
+---
+
+# 10. KEK / DEK エンベロープ暗号鍵ローテーション仕様 (Envelope Key Rotation)
+
+マスターパスフレーズの変更や暗号鍵の漏洩リスクに対処するため、暗号化済みオブジェクト Payload を再暗号化（全走査・再出力）することなく、高速 $O(1)$ に鍵を安全更新するローテーション仕様。
+
+## 10.1 ローテーション手順
+1. 新しいパスフレーズから新 KEK ($\text{KEK}_{\text{new}}$) を Argon2id により派生。
+2. 古い KEK ($\text{KEK}_{\text{old}}$) で暗号化されていた DEK ($\text{DEK}_{\text{raw}}$) を複合展開。
+3. 暗号化データキー（Encrypted DEK）領域のみを $\text{KEK}_{\text{new}}$ で再暗号化し保存メタデータを書き換え。
+- **計算量**: ストレージ内の全 Chunk オブジェクトの再暗号化を回避し、$O(1)$ で鍵更新が完了する。
+
+---
+
+# 11. IndexedDB / OPFS Storage Quota Management & LRU Eviction
+
+Web ブラウザ環境でストレージ容量制限（`QuotaExceededError`）が発生した際、Derived Index (Fingerprint DB, Diff Cache) を安全に解放し、コア Object の破損を防ぐアルゴリズム。
+
+```typescript
+export async function handleQuotaExceeded(storage: StorageAdapter): Promise<void> {
+  // 1. derived index / diff cache を優先的に削除して空き容量を確保
+  await storage.clearDerivedIndexCache();
+  
+  // 2. それでも容量不足の場合は LRU ルールに基づき古くなった未到達 loose オブジェクトを解放
+  await storage.evictUnreachableLooseObjectsLRU();
+}
+```

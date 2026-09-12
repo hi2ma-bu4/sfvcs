@@ -267,3 +267,5 @@ export class Repository {
 | `ERR_CYCLE_DETECTED`           | `CycleDetectedError`    | Tree Move による循環参照移動を検出                        | 自動決定論解決またはユーザー手動指定           |
 | `ERR_CONCURRENT_UPDATE`        | `ConcurrentUpdateError` | CAS 参照更新時に他プロセスとの書き込み競合を検出          | リトライ処理の実行                             |
 | `ERR_REPOSITORY_LOCKED`        | `RepositoryLockedError` | `.sfvcs/locks/` 内にロックファイルが存在                  | 他プロセスの終了待機、または不要ロック削除     |
+| `ERR_SUBMODULE_CYCLE`          | `SubmoduleCycleError`   | サブモジュール間の循環参照依存関係を検出                  | 設定ファイル内の URL / 階層構造修正            |
+| `ERR_QUOTA_EXCEEDED`           | `QuotaExceededError`    | ブラウザストレージ (IndexedDB/OPFS) の容量超過            | Derived Cache のクリアまたはストレージ拡張     |

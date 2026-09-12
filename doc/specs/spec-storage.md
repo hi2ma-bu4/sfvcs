@@ -357,3 +357,56 @@ GC Mark フェーズ実行中に、並行プロセスが新規オブジェクト
 
 - **ローカル LFS ディレクトリ**: `.sfvcs/lfs/objects/XX/YY/XXYYZZ...`
 - **転送プロトコル**: SHA-256 / BLAKE3 整合性チェックサムをヘッダーに含む HTTP/HTTPS Resumable Range Request (RFC 7233) 方式。
+
+---
+
+# 15. Racy Git 問題の回避アルゴリズム (Racy-Free Index Clean Inspection)
+
+ファイルシステムのステータス走査において、ファイルが `mtime` の精度（同秒・同ミリ秒内）と同じタイミングで変更され、サイズが同一のまま中身が書き換えられた場合に誤って未変更（Clean）と誤認する「Racy Git」問題を完全に回避するアルゴリズム。
+
+## 15.1 判定ロジックと Dirty 強制アルゴリズム
+`.sfvcs/index` の更新時刻 $T_{\text{index}}$ とファイルの最終更新時刻 $T_{\text{file}}$ を比較し、以下の条件を評価する。
+
+```python
+def is_racy_file(index_entry, stat_info, index_mtime) -> bool:
+    # 1. mtime または inode / size に変更があれば無条件に Modified
+    if stat_info.st_size != index_entry.file_size:
+        return True
+    if stat_info.st_ino != index_entry.ino:
+        return True
+    
+    # 2. mtime が index ファイル自体の更新時刻と同一または新しい場合 (Racy 可能性あり)
+    if stat_info.st_mtime >= index_mtime:
+        # キャッシュの Hash CID をそのまま信じず、即座にコンテンツの再ハッシュ計算を実行
+        return True
+        
+    return False
+```
+- **Racy 判定時**: キャッシュされた CID を絶対視せず、ファイル内容を再読み込みしてハッシュ値が変更されていないかを安全に検証する。
+
+---
+
+# 16. Thin Delta 差分探索アルゴリズム (Pack Clustering & Sliding Window)
+
+パックファイル生成時、全ペアのハッシュ比較を行わずに類似オブジェクトペアを高速抽出し高圧縮デルタを生成するアルゴリズム。
+
+## 16.1 パス・ハッシュソートとウィンドウ探索
+1. **クラスタリングキーによるソート**:
+   全対象オブジェクトを `(File_Extension, Normalized_Path_Bytes, File_Size)` の複合キーでソート。類似したファイルパス・同タイプのファイルをメモリ上で近接配置する。
+2. **スライディングウィンドウ比較**:
+   ウィンドウサイズ $W = 10$ オブジェクトの範囲内でのみ Base - Delta の組み合わせを比較し、最長共通差分バイトが得られるペアに Thin Delta (VCDIFF) を適用する。
+
+---
+
+# 17. Split-Block Bloom Filter (SBF) コミットグラフ高速化
+
+`commit-graph` 内で変更パスの検索を高速化するため、標準 Bloom Filter よりキャッシュ効率が優れる Split-Block Bloom Filter (SBF) を採用する。
+
+- **ブロック構成**: 256 ビット (32 バイト) 単位のブロックアレイ。
+- **SIMD / AVX2 キャッシュアライン**: CPU の L1/L2 キャッシュライン（64 バイト）に適合させ、ハッシュ計算時のメモリレイテンシを極小化。
+
+---
+
+# 18. GC In-flight Operation Generation Register (並行コミット保護)
+
+バックグラウンド GC 実行中に作成中の新規未参照オブジェクトが破棄される事故を防ぐため、`.sfvcs/state/in_flight_tx.json` に現在アクティブなトランザクション ID および作成中 CID レジストリを一時保持し、GC の Mark 集合へ動的にマージ保護する。

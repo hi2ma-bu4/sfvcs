@@ -16,6 +16,7 @@
   "core": {
     "caseSensitivity": "auto",       // "auto" | "sensitive" | "insensitive"
     "inheritGitignore": true,        // .gitignore パターンを自動的に継承して読み込む
+    "racyFreeInspection": true,      // Racy Git 回避 (mtime 同値時の再ハッシュ検証) を有効化
     "defaultBranch": "main",
     "inlineThreshold": 1024          // インライン格納の閾値バイト数
   },

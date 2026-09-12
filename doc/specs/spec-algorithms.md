@@ -406,3 +406,37 @@ def match_pathspec_trie(root: PathspecTrieNode, path: str) -> List[Rule]:
    親リポジトリの `Directory Node` (`SFDR`) を走査し、`ENTRY_SUBMODULE` エントリを検出した場合、配下の `.sfvcs/modules/<submodule_name>/` から対象 Commit CID を再帰的にチェックアウト。
 2. **Submodule Status**:
    サブモジュールディレクトリの現在の `HEAD` CID と、親 Directory Node に記録されたターゲット CID を比較し、`SUBMODULE_DIRTY`（内部未コミット変更あり）または `SUBMODULE_MOVED`（参照コミット不一致）を検出。
+
+---
+
+# 13. Prolly Tree 病的入力フォールバック & 最大深度制限アルゴリズム
+
+悪意ある入力（同じ文字の無制限な連続等）により CDC ハッシュが境界条件を満たさず、単一 Chunk が巨大化したり Sequence Tree が深くなりすぎる病的なケースに対するフォールバック保護仕様。
+
+## 13.1 最大深度 `MAX_TREE_DEPTH = 32` および確定分割
+- **ツリー最大深度制限**: Sequence Tree の再帰深度が `MAX_TREE_DEPTH = 32` に達した場合、境界判定 `is_internal_node_boundary()` の結果を無視し、ファンアウト上限 `MAX_FANOUT = 128` で強制的に固定グループ化・分割を行う。これによりスタックオーバーフローおよび極端な木構造の崩壊を数学的に防止する。
+
+---
+
+# 14. サブモジュール循環参照検出・防止アルゴリズム (Submodule Cyclic Dependency Detection)
+
+サブモジュールが自らを親として参照したり、A -> B -> A の循環参照（Cyclic Submodule Tree）を持つ場合に、再帰走査時の無限ループ・スタックオーバーフローを防止する判定アルゴリズム。
+
+```python
+def check_submodule_cycles(visited_repo_paths: Set[str], current_submodule_url: str) -> None:
+    canonical_url = normalize_repo_url(current_submodule_url)
+    if canonical_url in visited_repo_paths:
+        raise SubmoduleCycleError(f"Submodule cyclic dependency detected: {canonical_url}")
+    visited_repo_paths.add(canonical_url)
+```
+
+---
+
+# 15. 文字コード自動判定 & マルチバイト安全 Unified Diff 変換
+
+Shift_JIS, EUC-JP, UTF-16, UTF-8 などの多種多様なエンコーディングを含むテキストファイルに対し、文字化けやマルチバイト文字の境界切断を発生させずに Unified Diff を安全生成するアルゴリズム。
+
+1. **BOM & UTF-8 / Universal Chardet 判定**:
+   ファイル先頭の BOM (Byte Order Mark) およびバイト頻度解析によりエンコーディングを決定。
+2. **文字境界アライン**:
+   Chunk 差分からの行分割時、UTF-8 コードポイントの途中バイト（例: 3バイト文字の2バイト目）で切断しないよう、前後の改行バイト `\n` または UTF-8 リーダーバイト位置へオフセットを文字境界補正する。

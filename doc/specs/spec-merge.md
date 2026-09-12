@@ -159,3 +159,15 @@ Base, Ours, Theirs のマップ構造 $M_{\text{base}}, M_{\text{ours}}, M_{\tex
 # 8. Fugue Sequence CRDT リアルタイム協調編集アライメント
 
 スナップショット生成前のリアルタイム並行編集（Web IDE 協調等）において、Prolly Tree Sequence Node の子要素列と Fugue CRDT の可逆状態ベクトルを統合し、非インタラクティブな確定アライメントを実現する。
+
+---
+
+# 9. Concurrent Move / Delete 競合解法 (移動と削除の平行衝突)
+
+一方のブランチでファイル/ディレクトリが移動 ($\text{Move}(A \to B)$) され、他方のブランチで同一ファイル/ディレクトリが削除 ($\text{Delete}(A)$) された場合の決定論的マージ競合解決仕様。
+
+## 9.1 優先ルールと対話型/自動フォールバックメカニズム
+1. **決定論的デフォルト方針 (Move-Preserved Fallback)**:
+   データ消失（Data Loss）の危険を最小化するため、非対話型マージ（自動 CI / ロボットマージ）においては **移動 ($\text{Move}$) 側の操作を優先** し、移動先パス $B$ にオブジェクトを維持保存する。
+2. **コンフリクトステータス記録**:
+   `.sfvcs/MERGE_MSG` に `CONFLICT (rename/delete): A moved to B in Ours, deleted in Theirs.` の警告を記録し、`sfvcs status` でコンフリクト状態としてユーザーによる明示的確認または `--theirs` (削除採用) オプションでの上書きを許容する。

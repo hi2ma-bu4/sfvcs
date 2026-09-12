@@ -175,3 +175,29 @@ def find_missing_objects(client_haves: Set[CID], target_cid: CID, missing_list: 
    親リポジトリクローン時、`CAP_LAZY_FETCH` フラグを有効化し、`ENTRY_SUBMODULE` のルートコミットのみを取得。サブモジュール配下の詳細オブジェクトは、ユーザーアクセス時に `MSG_LAZY_FETCH_REQ` でオンデマンド取得。
 2. **LFS ストリーミング同期**:
    `MSG_LFS_POINTER_REQ` により `CONTENT_LFS_POINTER` (`0x02`) の Hash OID を要求し、サーバーから `MSG_LFS_DATA` フレームで Range Request (RFC 7233) 方式により分割受信。
+
+---
+
+# 6. Dynamic Range Object Loading Protocol (オンデマンド部分ツリー取得フレーム)
+
+Sparse Checkout や Shallow Clone 環境において、未取得の巨大 Sequence Node / Subtree オブジェクトがアクセスされた際にリアルタイムでサーバーから取得するストリーミングフレーム仕様。
+
+- **`MSG_DYNAMIC_RANGE_REQ` (`0x0B`)**:
+  ```
+  [Target_CID: 33 bytes][Byte_Offset_Start: uint64][Byte_Offset_Length: uint64]
+  ```
+- **`MSG_DYNAMIC_RANGE_RESP` (`0x0C`)**:
+  ```
+  [Target_CID: 33 bytes][Payload_Length: varint][Payload_Bytes]
+  ```
+
+---
+
+# 7. Submodule Recursive Sync Protocol (サブモジュールネスト交渉プロトコル)
+
+`ENTRY_SUBMODULE` (`0x04`) が含まれるリポジトリの `push` / `fetch` 時、親リポジトリと子サブモジュールのオブジェクト交渉を単一チャネル上で多重化（Multiplexing）して一括実行するシーケンス。
+
+1. **Submodule Discovery**:
+   親ツリー走査時に検出された各サブモジュールの Commit CID を `MSG_REF_DISCOVERY` に多重化付加。
+2. **Parallel Negotiation**:
+   各サブモジュールの `MSG_TREE_NEGOTIATE_REQ` を `Channel ID`（`0x0001`, `0x0002`...）ごとに分離して並行交渉し、オブジェクト未存在によるチェックアウト失敗（Dangling Submodule Ref）を防ぐ。
