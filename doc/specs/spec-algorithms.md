@@ -440,3 +440,109 @@ Shift_JIS, EUC-JP, UTF-16, UTF-8 などの多種多様なエンコーディン�
    ファイル先頭の BOM (Byte Order Mark) およびバイト頻度解析によりエンコーディングを決定。
 2. **文字境界アライン**:
    Chunk 差分からの行分割時、UTF-8 コードポイントの途中バイト（例: 3バイト文字の2バイト目）で切断しないよう、前後の改行バイト `\n` または UTF-8 リーダーバイト位置へオフセットを文字境界補正する。
+
+---
+
+# 16. Prolly Tree 病的ハッシュ攻撃・偏り保護のための二重マスク (Dual-Mask Normalization) 制御
+
+入力データが連続する同一バイト列（例: `0x00` の大量連続）やハッシュ攻撃的な入力を含む場合、単一の正規化マスク判定では Chunk サイズが極端に巨大化・細分化する危険がある。
+
+## 16.1 Dual-Mask Normalization アルゴリズム
+`FastCDC` 境界判定において、`MIN_SIZE` (2 KiB) から `AVG_SIZE` (8 KiB) までは厳格なマスク `MASK_S` (13 bits: 確率 $1/8192$) を使用し、`AVG_SIZE` (8 KiB) から `MAX_SIZE` (64 KiB) までは緩和されたマスク `MASK_L` (9 bits: 確率 $1/512$) を使用する。
+
+さらに、Gear Hash テーブルのハッシュ空間の偏りを補正するため、ローリングハッシュ値に二次ハッシュ関数（Salted SHA-256 由来のビット置換: `hash ^ 0x9E3779B97F4A7C15ULL`）を合成し、病的入力であっても決定論的かつ安定した Chunk 分割結果を保証する。
+
+```python
+def dual_mask_chunk_boundary(buffer: bytes, offset: int, total_len: int) -> int:
+    remaining = total_len - offset
+    if remaining <= MIN_SIZE:
+        return remaining
+
+    max_len = min(remaining, MAX_SIZE)
+    hash_val = 0
+    SALT = 0x9E3779B97F4A7C15
+    
+    curr = offset + MIN_SIZE
+    avg_boundary = min(offset + AVG_SIZE, offset + max_len)
+
+    while curr < avg_boundary:
+        byte_val = buffer[curr]
+        hash_val = ((hash_val << 1) + GEAR_TABLE[byte_val]) & 0xFFFFFFFFFFFFFFFF
+        if ((hash_val ^ SALT) & MASK_S) == 0:
+            return curr - offset + 1
+        curr += 1
+
+    max_boundary = offset + max_len
+    while curr < max_boundary:
+        byte_val = buffer[curr]
+        hash_val = ((hash_val << 1) + GEAR_TABLE[byte_val]) & 0xFFFFFFFFFFFFFFFF
+        if ((hash_val ^ SALT) & MASK_L) == 0:
+            return curr - offset + 1
+        curr += 1
+
+    return max_len
+```
+
+---
+
+# 17. MinHash / SuperMinHash スケッチを用いた Packfile 差分基底 (Thin Delta Base) 高速選定アルゴリズム
+
+パックファイル生成時、全オブジェクト間のペア比較を行わずに、最も差分圧縮率（Thin Delta）が高くなる類似ベースオブジェクト $O_{\text{base}}$ を $O(1)$ で高速選定するアルゴリズム。
+
+## 17.1 MinHash スケッチ計算と Jaccard 類似度判定
+1. 各 Leaf Chunk またはファイルオブジェクトに対し、$K = 64$ 個の独立したハッシュ関数 $h_1, h_2, \dots, h_K$ による MinHash スケッチ $V(O) = [\min_{x \in O} h_1(x), \dots, \min_{x \in O} h_K(x)]$ を生成する。
+2. 2 つのオブジェクト $A, B$ の Jaccard 類似度 $\hat{J}(A, B)$ を以下で推定する：
+   $$\hat{J}(A, B) = \frac{1}{K} \sum_{i=1}^K \mathbb{I}(V(A)[i] == V(B)[i])$$
+3. 類似度 $\hat{J}(A, B) \ge 0.50$ のオブジェクト候補の中で、最もバイトサイズが近くかつ生成タイミングが近いものを優先して VCDIFF Thin Delta のベースオブジェクト $O_{\text{base}}$ として選択する。
+
+---
+
+# 18. サブ行レベル (Sub-line / Token-level) Meyers Alignment を統合した高精度 Blame / Provenance 追跡
+
+1 行の中に複数の識別子や変数が変更された場合（例: `let x = 1;` -> `let x = 2;`）、行単位の Blame では行全体の著者が上書きされる。サブ行レベル（トークン単位）で変化を追跡し、より精密な変更履歴 provenance を特定する。
+
+## 18.1 トークン境界 Meyers Diff アライメント
+1. 行レベルの差分から変更行ペア $(L_{\text{old}}, L_{\text{new}})$ を特定。
+2. 該当行をプログラミング言語・汎用トークナイザ（識別子、演算子、リテラル、空白）によりトークン列 $T_{\text{old}}, T_{\text{new}}$ に分割。
+3. トークン列に対して Meyers Diff を再帰適用し、未変更のトークン列（例: `let`, `x`, `=`）の provenance（元コミット・著者）を保持したまま、変更されたトークン（例: `2`）のみに新コミット・著者を紐付ける。
+
+---
+
+# 19. 複数マージベース (Criss-Cross Merge) における仮想マージベース (Virtual Merge Base) 自動生成アルゴリズム
+
+有向非巡回グラフ (DAG) 内に複数の共通最浅祖先（Lowest Common Ancestors: LCA）が存在する Criss-Cross マージシナリオ（例: Ours と Theirs が相互に交差マージを繰り返した場合）において、確定的な 3-Way Structural Merge を実現するアルゴリズム。
+
+## 19.1 仮想マージベース生成手順
+1. コミットグラフから Ours コミット $C_{\text{ours}}$ と Theirs コミット $C_{\text{theirs}}$ の全共通祖先集合 $\text{LCA}(C_{\text{ours}}, C_{\text{theirs}}) = \{B_1, B_2, \dots, B_m\}$ を検出。
+2. $|\text{LCA}| = 1$ の場合は、その単一コミットをそのまま Merge Base とする。
+3. $|\text{LCA}| > 1$ (Criss-Cross シナリオ) の場合：
+   - 祖先コミット群 $B_1, B_2$ に対し、再帰的に 3-Way Structural Merge を適用。
+   - メモリ上に仮のマージスナップショット（Virtual Merge Base: $V_{\text{base}}$）を一時構築する。
+4. この合成された仮想ツリー $V_{\text{base}}$ を `Base` とみなし、$C_{\text{ours}}$ と $C_{\text{theirs}}$ の最終 3-Way Structural Merge を実行する。これにより Criss-Cross 発生時でも競合の誤検出をゼロにする。
+
+```python
+def find_or_create_virtual_merge_base(commit_ours: Commit, commit_theirs: Commit) -> DirectoryNode:
+    lcas = get_lowest_common_ancestors(commit_ours, commit_theirs)
+    if len(lcas) == 1:
+        return load_commit_root_tree(lcas[0])
+
+    # Criss-Cross シナリオ: 複数の LCA から再帰的に Virtual Merge Base を合成
+    base_tree = load_commit_root_tree(lcas[0])
+    for i in range(1, len(lcas)):
+        next_tree = load_commit_root_tree(lcas[i])
+        # 再帰的 3-way merge により中立な Virtual Merge Base を生成
+        base_tree = merge_trees(base=base_tree, ours=base_tree, theirs=next_tree).result_tree
+
+    return base_tree
+```
+
+---
+
+# 20. 巨大バイナリ用 VCDIFF メモリフットプリント制限付きストリーミングエンコード/デコードアルゴリズム
+
+数ギガバイト級のバイナリファイルに対して VCDIFF 差分エンコード/デコードを行う際、メモリ使用量を一定枠（例: **64 MiB 以下**）に制限しながらストリーミング処理を行うアルゴリズム。
+
+## 20.1 チャンクドスライディングウィンドウ VCDIFF 仕様
+1. 入力ストリームを固定サイズのターゲットウィンドウ $W_T$ (デフォルト: **16 MiB**) ごとに区切る。
+2. 対応するベースオブジェクトの参照範囲 $W_B$ をメモリ上にマップし、VCDIFF 命令（`ADD`, `RUN`, `COPY`）を生成・消費する。
+3. デコーダ側は `COPY` 命令実行時、ベースストリームへのランダムアクセスを $W_B$ バッファ内に限定することで、RAM 消費量を一定閾値以内に保ったままストリーミング処理を完結させる。

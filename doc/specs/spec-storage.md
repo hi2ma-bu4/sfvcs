@@ -410,3 +410,38 @@ def is_racy_file(index_entry, stat_info, index_mtime) -> bool:
 # 18. GC In-flight Operation Generation Register (並行コミット保護)
 
 バックグラウンド GC 実行中に作成中の新規未参照オブジェクトが破棄される事故を防ぐため、`.sfvcs/state/in_flight_tx.json` に現在アクティブなトランザクション ID および作成中 CID レジストリを一時保持し、GC の Mark 集合へ動的にマージ保護する。
+
+---
+
+# 19. エポック置換型並行ロックフリー Packfile 再構築 (Lockless Epoch-Based Packfile Compaction)
+
+`sfvcs repack` や GC の実行中であっても、リポジトリへの並行読み書き（コミット・ブランチ切替・Diff 参照）を一切ブロックせずにパックファイルをアトミック再構築するロックフリー方式。
+
+## 19.1 エポック世代世代管理と `multi-pack-index` (MIDX) アトミック置換
+1. **世代エポック番号 $E$ の保持**:
+   現在のパック状態を `.sfvcs/objects/pack/multi-pack-index` (MIDX) の世代エポック $E$ として保持。
+2. **バックグラウンドパック生成**:
+   旧パック群 $P_1, P_2, \dots$ を読み込み、VCDIFF 差分再計算を行った新パックファイル $P_{\text{new}}$ を一時ディレクトリに生成。
+3. **エポックアトミック切り替え**:
+   新 MIDX インデックス `multi-pack-index.new` をアトミックにリネーム移動し、読者プロセスが参照するアクティブインデックスを $E+1$ へ $O(1)$ 更新する。
+4. **旧パックファイルの遅延解放 (Grace Period Eviction)**:
+   旧パックファイル $P_1, P_2$ は、現在実行中のアクティブ読者セッションが完了する猶予期間（デフォルト: **5分**）経過後に削除する。
+
+---
+
+# 20. OS ファイルシステム監視デーモン (FSMonitor / inotify / FSEvents) 統合による $O(\text{変更数})$ 高速ステータス走査
+
+数百万ファイルが存在する巨大ワークツリーにおいて、全ファイルシステムに対して `stat()` システムコールを発行せず、$O(\text{変更ファイル数})$ で変更状態を瞬時に検出する FSMonitor アーキテクチャ。
+
+## 20.1 プラットフォーム別 OS イベントバックエンドとソケット通信規約
+- **バックエンド**: Linux (`inotify` / `fanotify`)、macOS (`FSEvents`)、Windows (`ReadDirectoryChangesW`)。
+- **通信プロトコル (`.sfvcs/fsmonitor-v1`)**: UNIX ドメインソケットまたは IPC ポート経由の高速バイナリ通信。
+
+```python
+def get_dirty_paths_from_fsmonitor(last_token_timestamp: int) -> List[str]:
+    # 全ディレクトリ走査を行わず、デーモンに前回走査時刻からの変更通知差分のみを問い合わせる
+    socket = connect_ipc_socket(".sfvcs/fsmonitor-v1")
+    socket.send_request(command="query", since_timestamp=last_token_timestamp)
+    response = socket.read_response()
+    return response.changed_paths # 変更があったパス文字列配列のみを返却
+```

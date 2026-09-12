@@ -5005,3 +5005,18 @@ repository全体を単一の巨大objectとして扱わず、
 - **Submodule 循環依存防止**: グラフ走査時の循環参照検知とスタックオーバーフロー回避。
 - **エンベロープ暗号鍵ローテーション**: $O(1)$ 暗号化 DEK メタデータ更新。
 - **ストレージ容量制限 LRU Eviction**: IndexedDB / OPFS での容量超過時 Derived Cache 自動解放。
+
+## 171.14 最先端高度アルゴリズム & パフォーマンス拡張仕様
+本リポジトリの全詳細仕様書において新たに統合された最先端アルゴリズム要件のインデックスを以下に定義する。
+
+- **Prolly Tree Dual-Mask Normalization & 二次ハッシュ合成**: 病的入力・同バイト連続データに対する Dual-Mask 正規化と Salted 比率補正による確定木境界保護 (`doc/specs/spec-algorithms.md` 参照)。
+- **MinHash / SuperMinHash スケッチ Packfile 薄差分基底選定**: オブジェクト全数比較を行わない $O(1)$ スケッチ計算に基づく Thin Delta ベース最適選定 (`doc/specs/spec-algorithms.md` 参照)。
+- **サブ行・トークン境界 Meyers Alignment Blame 追跡**: 単一行内の同一ライン部分変更に対するトークン単位 Provenance 精細追跡 (`doc/specs/spec-algorithms.md` 参照)。
+- **Criss-Cross 複数 LCA 時の Virtual Merge Base 再帰的自動合成**: 交差マージ履歴 DAG における確定的な 3-Way Structural Merge (`doc/specs/spec-algorithms.md` 参照)。
+- **メモリフットプリント制限付き Sliding Window VCDIFF ストリーミング**: 64 MiB 以下の一定 RAM 消費量で数 GiB バイナリの差分エンコード/デコードを完結 (`doc/specs/spec-algorithms.md` 参照)。
+- **エポック置換型 Lockless Packfile Compaction & MIDX アトミック移動**: 読者セッションを一切ブロックしない並行パック再構築 (`doc/specs/spec-storage.md` 参照)。
+- **OS FSMonitor デーモン連携による $O(\text{変更数})$ 高速ステータス走査**: UNIX ソケット経由の変更差分パス受託による `stat()` 発行コスト破棄 (`doc/specs/spec-storage.md` 参照)。
+- **Sparse-Checkout / Lazy Fetch バッチプリフェッチ (`MSG_PREFETCH_BATCH_REQ`)**: 欠落 CID を集約バッファリングし、N+1 ラウンドトリップレイテンシを排除 (`doc/specs/spec-network.md` 参照)。
+- **QUIC / HTTP-3 セッション再開トークン (`MSG_RESUME_STREAM_REQ`)**: ネットワーク瞬断時の中断バイトオフセットからの 0-RTT 高速復元 (`doc/specs/spec-network.md` 参照)。
+- **マルチスレッド/Web Worker AES-SIV (Synthetic IV) 暗号化**: 並行暗号化処理における IV / Nonce 再利用脆弱性の完全防止 (`doc/specs/spec-virtual-vcs.md` 参照)。
+- **サブモジュール分岐統合時 Cross-Commit Reconciliation**: 配下サブモジュールにおける再帰的 3-Way Merge と `ENTRY_SUBMODULE` 自動更新 (`doc/specs/spec-merge.md` 参照)。

@@ -201,3 +201,35 @@ Sparse Checkout や Shallow Clone 環境において、未取得の巨大 Sequen
    親ツリー走査時に検出された各サブモジュールの Commit CID を `MSG_REF_DISCOVERY` に多重化付加。
 2. **Parallel Negotiation**:
    各サブモジュールの `MSG_TREE_NEGOTIATE_REQ` を `Channel ID`（`0x0001`, `0x0002`...）ごとに分離して並行交渉し、オブジェクト未存在によるチェックアウト失敗（Dangling Submodule Ref）を防ぐ。
+
+---
+
+# 8. Sparse-Checkout / Lazy Fetch における N+1 ネットワークラウンドトリップ回避バッチプリフェッチ (Prefetch Window) プロトコル
+
+Sparse-Checkout や Lazy Fetch において、欠落オブジェクトを 1 項目ずつ個別に取得要求すると、ネットワークラウンドトリップレイテンシが蓄積して極端に低速化する（N+1 問題）。
+
+## 8.1 バッチプリフェッチウィンドウ (`MSG_PREFETCH_BATCH_REQ: 0x0D`)
+1. **バッチ要求メッセージ形式 (`0x0D`)**:
+   ```
+   [CID_Count: varint][CID Array (33 bytes x Count)][Depth_Limit: uint8 (デフォルト: 2)]
+   ```
+2. **クライアント側バッファリングアルゴリズム**:
+   クライアントは欠落 CID の読み込み要求が発生した際、即座に送信せず、一定の要求ウィンドウ時間（**50 ms**）または上限件数（**100 CIDs**）まで要求をメモリキューにバッファリングし、単一の `MSG_PREFETCH_BATCH_REQ` として一括送信する。
+3. **サーバー側到達可能ツリー推論プリフェッチ**:
+   サーバーは受信した CID リストに対し、指定深さ `Depth_Limit` (2 階層) までの配下 Sequence Node および Chunk を先回りして一括集約し、単一の `MSG_PACKFILE_DATA` ストリームとして返答する。これによりネットワークラウンドトリップ数を 1/100 以下に削減する。
+
+---
+
+# 9. 高速回復性を備えた QUIC / HTTP-3 パケット多重化およびストリーム再開トークン (Session Resumption Token) プロトコル
+
+モデム断線や Wi-Fi/5G モバイル環境におけるネットワーク瞬断・切断時、途中まで転送した巨大パックデータを破棄せず、転送中断位置から $O(1)$ で高速再開するプロトコル。
+
+## 9.1 セッション再開トークン構造および即時復元シーケンス
+- **セッション再開トークンフレーム (`MSG_SESSION_TOKEN: 0x10`)**:
+  サーバーは転送開始時にクライアントへセッション再開トークン `Session_Token` (32 バイト暗号的ランダム, 有効期間: **24時間**) を発行。
+- **転送再開リクエスト (`MSG_RESUME_STREAM_REQ: 0x11`)**:
+  ```
+  [Session_Token: 32 bytes][Last_Received_Byte_Offset: uint64][Channel_ID: uint16]
+  ```
+- **QUIC 0-RTT ハンドシェイク統合**:
+  QUIC / HTTP/3 トランスポートの 0-RTT ハンドシェイクパケット内に `MSG_RESUME_STREAM_REQ` を埋め込み、接続再確立と同時に中断オフセット以降のバイトストリーム送信を即座に再開する。

@@ -270,3 +270,20 @@ export async function handleQuotaExceeded(storage: StorageAdapter): Promise<void
   await storage.evictUnreachableLooseObjectsLRU();
 }
 ```
+
+---
+
+# 12. マルチスレッド/Web Worker 並列実行時の IV 再利用防止暗号化 (AES-SIV / Synthetic IV & Counter State) 仕様
+
+複数の Web Worker や並列 Worker スレッドが同一の暗号化鍵 (DEK) を用いて並行して Object チャンクを暗号化する際、IV / Nonce の衝突による破綻を防ぐ安全アルゴリズム。
+
+## 12.1 AES-SIV (Synthetic IV: RFC 5297) 暗号化仕様
+1. **Nonce 衝突問題の回避**:
+   標準の AES-GCM では並列処理時に同一 IV が再利用された場合に暗号解読の脆弱性が発生する。これを防ぐため、暗号学的合成 IV 方式 **AES-SIV (RFC 5297)** を採用する。
+2. **合成 IV ($S_{iv}$) 計算式**:
+   平文データ $M$（Chunk オブジェクト）および Associated Data (AD: CID ドメインタグ文字列) に対し、S2V 判定関数により $S_{iv}$ を決定論的に算出する。
+   $$S_{iv} = \text{S2V}(\text{DEK}, M || \text{AD})$$
+3. **並列暗号化出力レイアウト**:
+   `[Synthetic_IV (16 bytes)][Ciphertext Payload]`
+   各 Worker スレッドは状態共有やカウンター同期を行わずに、完全独立かつ安全に暗号化処理を実行可能となる。
+

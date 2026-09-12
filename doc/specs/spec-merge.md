@@ -171,3 +171,20 @@ Base, Ours, Theirs のマップ構造 $M_{\text{base}}, M_{\text{ours}}, M_{\tex
    データ消失（Data Loss）の危険を最小化するため、非対話型マージ（自動 CI / ロボットマージ）においては **移動 ($\text{Move}$) 側の操作を優先** し、移動先パス $B$ にオブジェクトを維持保存する。
 2. **コンフリクトステータス記録**:
    `.sfvcs/MERGE_MSG` に `CONFLICT (rename/delete): A moved to B in Ours, deleted in Theirs.` の警告を記録し、`sfvcs status` でコンフリクト状態としてユーザーによる明示的確認または `--theirs` (削除採用) オプションでの上書きを許容する。
+
+---
+
+# 10. サブモジュール分岐統合時におけるマージベース自動判定および Detached HEAD 競合自動調停
+
+親リポジトリでブランチマージを実行する際、`ENTRY_SUBMODULE` (`0x04`) の参照 Commit CID が Ours と Theirs で異なる変更を受けていた場合のサブモジュール自動統合アルゴリズム。
+
+## 10.1 3-Way Submodule Commit Merge 規則
+1. サブモジュールの参照コミット $C_{\text{sub\_base}}, C_{\text{sub\_ours}}, C_{\text{sub\_theirs}}$ を抽出。
+2. **Fast-Forward チェック**:
+   - $C_{\text{sub\_base}} == C_{\text{sub\_ours}}$ ならば、$C_{\text{sub\_theirs}}$ をそのまま自動採択。
+   - $C_{\text{sub\_base}} == C_{\text{sub\_theirs}}$ ならば、$C_{\text{sub\_ours}}$ をそのまま自動採択。
+3. **Submodule Cross-Commit Reconciliation (両者別コミットへ進捗)**:
+   - $C_{\text{sub\_ours}}$ から $C_{\text{sub\_theirs}}$ が Fast-Forward 到達可能であれば、$C_{\text{sub\_theirs}}$ を採択。
+   - $C_{\text{sub\_theirs}}$ から $C_{\text{sub\_ours}}$ が Fast-Forward 到達可能であれば、$C_{\text{sub\_ours}}$ を採択。
+4. **Submodule Merge Conflict**:
+   双方のコミットが分岐（Diverged）している場合、配下サブモジュールディレクトリ内で自動的に内部 3-Way Merge を再帰呼び出しし、生成された合成マージコミット $C_{\text{sub\_merged}}$ の CID を親 Directory Node の `ENTRY_SUBMODULE` へ自動設定する。
