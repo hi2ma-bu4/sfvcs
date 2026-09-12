@@ -148,6 +148,12 @@ CID が `0x02` (BLAKE3) + `a1b2c3d4e5...` (32バイトhex: `a1b2c3d4e567890abcde
 +-------------------------------------------------------+
 ```
 
+### デルタチェーン制限規則 (Thin Delta Constraints)
+- **最大デルタ連鎖深度 (`MAX_DELTA_DEPTH`)**: **50**
+  - 再帰的デルタ展開時のコールスタックオーバーフローおよび展開オーバーヘッドを抑止するため、デルタ連鎖の最大深さを 50 に制限する。
+- **Prolly Tree シーケンスノードのデルタ非適用ルール**:
+  - `SFSQ` (Sequence Node) および `SFDR` (Directory Node) は、$O(1)$ 〜 $O(\log N)$ の Multi-resolution Diff および高速アクセスを実現するため、**デルタ圧縮の対象外（常に Raw オブジェクト格納）** とする。デルタ圧縮は主に大容量 `SFCK` (Leaf Chunk) のみに適用する。
+
 ---
 
 ## 4.2 パックインデックスフォーマット (`.idx` Layout)
@@ -174,7 +180,7 @@ CID が `0x02` (BLAKE3) + `a1b2c3d4e5...` (32バイトhex: `a1b2c3d4e567890abcde
 
 ---
 
-# 5. Reflog (参照履歴) 仕様
+# 5. Reflog (参照履歴) 仕様および期限切れ枝払い (Pruning)
 
 ブランチや `HEAD` の参照更新履歴をアペンドオンリー（追記専用）ログとして保存し、誤って削除または `reset` されたコミットの復元を可能にする。
 
@@ -184,6 +190,12 @@ CID が `0x02` (BLAKE3) + `a1b2c3d4e5...` (32バイトhex: `a1b2c3d4e567890abcde
 ```
 <old_cid> <new_cid> <committer_name> <<committer_email>> <timestamp> <tz> <action>: <message>
 ```
+
+## 5.2 Reflog 自動パージ・期限切れ設定 (Reflog Expiration)
+ログの膨大化を防ぐため、`sfvcs reflog expire` コマンドまたは `sfvcs gc` 実行時に以下の保持ルールに従って古い Reflog エントリを削除する。
+
+- **`expire` (到達不能コミット参照 Reflog)**: デフォルト **30 日**（到達不可能な過去 Reflog エントリのパージ閾値）。
+- **`expireUnreachable` (到達可能コミット参照 Reflog)**: デフォルト **90 日**（現在の Ref から到達可能なコミットの Reflog 保持期限）。
 
 ---
 
@@ -229,15 +241,32 @@ CID が `0x02` (BLAKE3) + `a1b2c3d4e5...` (32バイトhex: `a1b2c3d4e567890abcde
 
 ---
 
-# 8. ガベージコレクション (GC) 仕様
+# 8. ガベージコレクション (GC) 仕様および Grace Period（猶予期間）
 
-到達不能な不要オブジェクト（未コミットの試行オブジェクトや削除ブランチの過去データ）を削除・クリーンアップする手順。
+到達不能な不要オブジェクト（未コミットの試行オブジェクトや削除ブランチの過去データ）を安全に削除・クリーンアップする手順。
 
-## 8.1 Mark-and-Sweep 手順
+## 8.1 Mark-and-Sweep 手順および Grace Period（猶予期間）保護
 
 1. **Root Set の収集 (Mark Phase)**:
    - `.sfvcs/refs/` 配下の全 Reference (heads, tags) および `HEAD` の Commit CID を取得。
+   - `.sfvcs/index` 内のステージング CID、`refs/stash`、および Reflog 内で保持されている Commit CID を Root Set に追加。
 2. **Reachable Graph 追跡**:
    - ビットマップ `.bitmap` が存在する場合はビット論理和で一括計算。存在しない場合は再帰追跡。
-3. **Unreachable Sweep**:
-   - 生存 CID に含まれない作成日時 **24 時間経過** 以上のオブジェクトを掃除。
+3. **Unreachable Sweep と Grace Period（猶予期間）**:
+   - 到達不能と判定されたオブジェクトであっても、現在コミット処理中・ステージング処理中の並行プロセスが作成した一時オブジェクトである可能性を考慮し、**Grace Period（猶予期間: デフォルト 14 日間）** を設定する。
+   - オブジェクトの最終更新日時（`mtime`）が Grace Period 未満のオブジェクトは削除をスキップし、保護する。
+   - 即時完全削除を行う場合は `sfvcs gc --prune=now` オプションを指定する。
+
+---
+
+# 9. クライアントフック (Client Hooks) システム
+
+`.sfvcs/hooks/` 配下に配置されたスクリプトを実行し、ワークフローの各種ライフサイクルイベントでカスタム検証を行う。
+
+## 9.1 フック実行タイミングと仕様
+
+| フック名 | 実行タイミング | 終了コード `!= 0` 時の挙動 | 主な用途 |
+|---|---|---|---|
+| `pre-commit` | コミットオブジェクト生成・書き込み直前 | コミットを即座に中断・キャンセル | Linter/フォーマッタチェック |
+| `pre-push` | リモートへのオブジェクト送信・Ref 更新直前 | Push 送信処理を即座に中止 | 自動テスト実行・資格情報チェック |
+| `post-checkout` | チェックアウト完了後 | 警告ログ出力のみ（チェックアウト自体は完了） | 依存関係 (`npm install`) の同期など |

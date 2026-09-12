@@ -99,6 +99,28 @@ export interface CryptoAdapter {
 - **ブラウザ**: Web Crypto API または BLAKE3 WASM モジュールを使用。
 - **WASM 加速**: C/Rust からコンパイルされた WebAssembly モジュールを組み込むことで、大量ハッシュ計算および FastCDC 処理を物理ネイティブに近い性能に引き上げる。
 
+## 3.3 WebCrypto によるコミット電子署名・鍵管理・検証仕様 (`WebCryptoSigner`)
+Web ブラウザ環境において外部ツール（GPG / OpenSSH CLI）が存在しない場合、W3C 標準の **Web Crypto API** (`SubtleCrypto`) を用いて Ed25519 コミット電子署名生成および公開鍵検証を行う。
+
+### 鍵ペア保持構造 (`IndexedDBKeyring`)
+- 生成された Ed25519 鍵ペア（`CryptoKey` オブジェクト: `extractable: false`）は、`IndexedDB` の非公開オブジェクトストア `sfvcs_keyring` に保存し、ブラウザ外への秘密鍵の不正漏洩を物理的に遮断する。
+
+### 署名および検証シーケンス (`SubtleCrypto`)
+```typescript
+export interface WebCryptoKeyringAdapter {
+  /** Ed25519 鍵ペアの生成および IndexedDB 保存 */
+  generateEd25519KeyPair(): Promise<CryptoKeyPair>;
+
+  /** コミットデータバイト列への Ed25519 電子署名 (SIG_ED25519) 計算 */
+  signCommitData(commitBytes: Uint8Array, privateKey: CryptoKey): Promise<Uint8Array>;
+
+  /** WebCrypto による Ed25519 コミット電子署名検証 */
+  verifyCommitSignature(commitBytes: Uint8Array, signatureBytes: Uint8Array, publicKey: CryptoKey): Promise<boolean>;
+}
+```
+- **署名生成**: `window.crypto.subtle.sign({ name: 'Ed25519' }, privateKey, commitPayloadBytes)`
+- **署名検証**: `window.crypto.subtle.verify({ name: 'Ed25519' }, publicKey, signatureBytes, commitPayloadBytes)`
+
 ---
 
 ## 3.3 `CompressionAdapter` インターフェース

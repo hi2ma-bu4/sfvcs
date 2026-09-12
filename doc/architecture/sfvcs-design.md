@@ -507,6 +507,7 @@ Directoryはrecursive treeとする。
     Directory
     ├── file.txt -> File Node
     ├── image.png -> File Node
+    ├── sub_repo -> Submodule (Commit CID)
     └── src -> Directory Node
               ├── main.ts
               └── util.ts
@@ -514,10 +515,13 @@ Directoryはrecursive treeとする。
 directory entryには、
 
 - name
-- type
+- type (FILE: 0x01, DIRECTORY: 0x02, SYMLINK: 0x03, SUBMODULE: 0x04)
 - child CID
 
-などを持たせる。
+持たせる。
+
+また、`File Node` 内の拡張属性 (`xattr`) については、シリアライズ順序による CID 決定性のブレを防ぐため、キー文字列の UTF-8 バイト昇順でのソートを必須とする。
+サブモジュールエントリ (`ENTRY_SUBMODULE`) は、ネストされた別 sfvcs リポジトリの該当コミット CID (`SFCM`) を参照し、マルチリポジトリの統合管理を可能にする。
 
 ---
 

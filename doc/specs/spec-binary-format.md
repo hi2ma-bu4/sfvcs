@@ -152,7 +152,7 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 +-------------------------------------------------------+
 | Extended Attributes (xattr) Count (varint)            |
 +-------------------------------------------------------+
-| Array of xattr entries:                               |
+| Array of xattr entries (キーのUTF-8バイト昇順ソート済み): |
 |   [key: String][val_len: varint][val_bytes: bytes]    |
 +-------------------------------------------------------+
 | Content Storage Type (uint8)                          |
@@ -160,6 +160,12 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 | Content Payload (インラインバイト OR Content Root CID) |
 +-------------------------------------------------------+
 ```
+
+#### xattr (拡張属性) カノニカル決定性ルール
+拡張属性 (xattr) が存在する場合、シリアライズ順序による CID 決定性のブレ（ハッシュの非決定性）を防ぐため、以下のカノニカルソート規約を必須とする。
+- **ソート条件**: 全 `xattr` エントリは、キー文字列 (`key: String`, NFC正規化済み) の **UTF-8 バイト順 (Lexicographical order)** で厳密に昇順ソートして配列化しなければならない。
+- **重複キー**: 重複するキーの格納は厳格に禁止する。
+- **バリデーション**: デコード時または `sfvcs fsck` 検証時、キーが昇順ソートされていない場合は `InvalidObjectError` と判定する。
 
 #### File Flags 仕様
 - `0x01` (`FILE_EXEC`): 実行可能ファイル権限 (例: `0755`)
@@ -208,6 +214,7 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 - `0x01` (`ENTRY_FILE`): File Node (`SFFL`) を参照
 - `0x02` (`ENTRY_DIRECTORY`): Directory Node (`SFDR`) を参照
 - `0x03` (`ENTRY_SYMLINK`): Symlink Object (`SFSL`) を参照
+- `0x04` (`ENTRY_SUBMODULE`): サブモジュール（ネストされた外部/内部 sfvcs リポジトリの Commit CID: `SFCM`）を参照
 
 ---
 
@@ -267,9 +274,12 @@ CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 2. **NFC パス正規化検証**: エントリ名およびパス文字列が Unicode NFC 形式でエンコードされていること。
 3. **正規化検証**:
    - `SFDR`（Directory）内のエントリが正確に UTF-8 バイト昇順に並んでいること。
+   - `SFFL`（File）内の `xattr` エントリキーが正確に UTF-8 バイト昇順に並んでいること。
    - `SFSQ`（Sequence）内の Logical Length の合計が `Logical Subtree Byte Length` と正確に一致すること。
 4. **型参照の正当性**:
    - Directory の `ENTRY_FILE` は `SFFL` オブジェクトを指していなければならない。
    - Directory の `ENTRY_DIRECTORY` は `SFDR` オブジェクトを指していなければならない。
+   - Directory の `ENTRY_SYMLINK` は `SFSL` オブジェクトを指していなければならない。
+   - Directory の `ENTRY_SUBMODULE` は対象リポジトリの `SFCM` (Commit) オブジェクトの CID を指していなければならない。
    - Sequence Node の `FLAG_LEAF_CHILDREN` 時、全参照先 CID は `SFCK` オブジェクトでなければならない。
 5. **電子署名検証**: 署名が付与されているコミットオブジェクトについて、公開鍵または信頼できるキーリングと照合して改ざんがないことを確認すること。

@@ -62,14 +62,20 @@
 
 ## 4.1 閉環競合 (Cycle Conflict) と解決
 - **発生シナリオ**:
-  - Base: ディレクトリ `/A/B/` が存在。
-  - Ours: `/A` を `/A/B/` の下に移動 ($\text{Move}(A \to B/A)$)。
-  - Theirs: `/B` を `/A/` の下に移動 ($\text{Move}(B \to A/B)$)。
-  - 単純マージすると `/A` が `/B` の子になり、`/B` が `/A` の子になる閉環（ルックアップ不可能状態）が生成される。
-- **自動解決アルゴリズム (Deterministic Cycle Resolution)**:
-  1. マージ処理中に祖先パス探索アルゴリズム (`detect_ancestor_cycle`) を実行。
-  2. 閉環が検出された場合、決定論的タイブレーキングルールを適用：
-     - **ルール**: コミットハッシュ値 (CID) が大きい側（またはタイムスタンプが最新の側）の Move 操作を優先採用し、他方の Move 操作を元の親位置（Base の親）に戻す（またはコンフリクトとして記録）。
+  - Base: ディレクトリ `/A/` および `/B/` が存在。
+  - Ours: ディレクトリ `/A` を `/B/` の下に移動 ($\text{Move}(A \to B/A)$)。
+  - Theirs: ディレクトリ `/B` を `/A/` の下に移動 ($\text{Move}(B \to A/B)$)。
+  - 単純マージすると `/A` が `/B` の子になり、`/B` が `/A` の子になる閉環（ルックアップ不能・無限ループ状態）が生成される。
+- **自動解決アルゴリズム (Deterministic Cycle Resolution: Kleppmann et al., 2021)**:
+  1. **グラフ構築と祖先パスチェック**:
+     ディレクトリツリーの再構築時、提案された全 Move 操作による親ノード対 `(Child, Parent)` から移動移動グラフを維持。移動先ノード $P$ が移動対象ノード $C$ の子孫構造内に含まれていないか（$P \in \text{Descendants}(C)$）を祖先パス探索関数 `is_ancestor(C, P)` により全数チェック。
+  2. **決定論的タイブレーキング (Deterministic Tie-Breaking)**:
+     閉環が検出された場合、レプリカ間の一貫性を保証するため、決定論的優先度関数 $\text{Priority}(\text{Op})$ を用いて衝突した Move 操作の優先度を評価する。
+     $$\text{Priority}(\text{Op}) = \text{Commit\_Timestamp} || \text{Commit\_CID\_Bytes}$$
+     - **勝者 (Winner)**: $\text{Priority}$ の値が大きい（最新のタイムスタンプ、または辞書順で大きい CID）側の Move 操作をそのまま採用。
+     - **敗者 (Losing Fallback)**: 優先度の低い側の Move 操作は自動的にキャンセルし、該当ディレクトリを **Base 状態の元の親ディレクトリ配下（または安全なフォールバック位置）へ安全に復帰** させる。
+  3. **コンフリクト通知**:
+     フォールバックが発生した場合は自動的に警告メッセージを `.sfvcs/MERGE_MSG` に記録し、`sfvcs status` でユーザーに非破壊的な補正が適用されたことを明示する。
 
 ## 4.2 重複移動競合 (Double Move Conflict)
 - **発生シナリオ**:
@@ -94,8 +100,18 @@ const timeout = 10000;
 >>>>>>> THEIRS (feature/timeout)
 ```
 
-## 5.2 構造コンフリクトファイル (Structural Conflict State)
-マージ未完了状態の情報は `.sfvcs/state/MERGE_HEAD`, `.sfvcs/state/MERGE_RR`, および `.sfvcs/index` 内の Stage 情報 (Stage 1: Base, Stage 2: Ours, Stage 3: Theirs) として記録される。
+## 5.2 構造コンフリクトファイルおよび状態永続化ファイル (State Machine Files)
+マージ、リベース、チェリーピック、チェンジ退避等の中断・コンフリクト未完了状態の永続化およびステートマシン制御は、`.sfvcs/` 配下の以下の専用状態ファイルによって管理される。
+
+| ファイルパス | 役割・格納データ | 削除・クリーンアップタイミング |
+|---|---|---|
+| `.sfvcs/MERGE_HEAD` | マージ対象の Theirs Commit CID (33bytes) | `sfvcs commit` または `sfvcs merge --abort` 完了時 |
+| `.sfvcs/MERGE_MSG` | マージコミット用メッセージ案（コンフリクト一覧および Tree Move 解決ログ含む） | マージコミット完了時 |
+| `.sfvcs/REBASE_HEAD` | Rebase 中の元の HEAD Commit CID | `sfvcs rebase --continue` 完了時または `--abort` 時 |
+| `.sfvcs/rebase-merge/` | Rebase の進行状態データ（適用コミットキュー、現在のパッチ index、`onto` Commit CID） | Rebase シーケンス完了時 |
+| `.sfvcs/CHERRY_PICK_HEAD` | 現在 Cherry-Pick 実行中の Commit CID | Cherry-Pick 完了時または `--abort` 時 |
+| `.sfvcs/REVERT_HEAD` | 現在 Revert 実行中の Commit CID | Revert 完了時または `--abort` 時 |
+| `.sfvcs/STASH_DIR` | Stash スタックオブジェクトのデータディレクトリ | `sfvcs stash drop` または `clear` 実行時 |
 
 ---
 

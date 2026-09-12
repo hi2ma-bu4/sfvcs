@@ -201,9 +201,22 @@ Sequence Tree の Chunk 単位の構造差分から、人間が可読な標準 U
 
 ```python
 def compute_winnowing_fingerprint(data: bytes) -> List[uint32]:
-    hashes = [gear_hash(data[i:i+16]) for i in range(len(data) - 15)]
-    fingerprints = set()
+    # 境界値・小規模ファイルフォールバック処理
+    if len(data) == 0:
+        return []
     
+    # データサイズが k-gram (16 bytes) 未満の場合はゼロパディングして1つのハッシュを生成
+    if len(data) < 16:
+        padded = data.ljust(16, b'\x00')
+        return [gear_hash(padded)]
+
+    hashes = [gear_hash(data[i:i+16]) for i in range(len(data) - 15)]
+    
+    # ハッシュ列の長さがウィンドウサイズ w (32) 未満の場合は全ハッシュ中の最小値を採択
+    if len(hashes) < 32:
+        return [min(hashes)]
+
+    fingerprints = set()
     for i in range(len(hashes) - 31):
         window = hashes[i:i+32]
         min_val = min(window)
@@ -211,6 +224,16 @@ def compute_winnowing_fingerprint(data: bytes) -> List[uint32]:
 
     return sorted(list(fingerprints))
 ```
+
+## 5.2 小規模ファイル (Short Files) の Winnowing 計算フォールバック規約
+Winnowing アルゴリズムは $k$-gram ($k=16$) およびウィンドウサイズ $w=32$（計約47バイト）以上のデータ長を想定している。47バイト未満の短小ファイルに対する例外・境界値処理ルールを以下のように定める。
+
+1. **データ長 $N < 16$ バイトの場合**:
+   末尾を `0x00` バイトで 16 バイトまでゼロパディングし、単一の Gear Hash を計算して要素数 1 の Fingerprint スケッチとする。
+2. **データ長 $16 \le N < 47$ バイトの場合 ($k$-gram 数 $M < 32$)**:
+   ウィンドウサイズを満たさないため、全 $k$-gram ハッシュ列の中から単一の最小ハッシュ値を選出して Fingerprint スケッチとする。
+3. **Jaccard 類似度計算時のフォールバック**:
+   比較対象の双方または一方が短小ファイルの場合、Winnowing Fingerprint の要素数が少なくなるため、内容の直接バイト比較（または CID 比較）へフォールバックして信頼度スコアを決定する。
 
 ---
 

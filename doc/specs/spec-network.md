@@ -32,14 +32,57 @@ Git などの従来の VCS プロトコルとの最大の違いは、**Prolly Tr
 ### Frame Type 一覧
 | Type ID | 名称 | 説明 |
 |---|---|---|
+| `0x00` | `MSG_HANDSHAKE_CAPABILITIES` | 初期ハンドシェイクおよび機能交渉 (Capability Negotiation) |
 | `0x01` | `MSG_REF_DISCOVERY` | 参照 (Refs) 一覧の広告・要求 |
 | `0x02` | `MSG_TREE_NEGOTIATE_REQ` | 差分オブジェクト探索交渉リクエスト |
 | `0x03` | `MSG_TREE_NEGOTIATE_RESP` | 差分オブジェクト探索交渉レスポンス |
 | `0x04` | `MSG_PACKFILE_DATA` | パックデータ（オブジェクト群）ストリーム |
 | `0x05` | `MSG_REF_UPDATE_REQ` | リモート Ref の CAS 更新リクエスト |
 | `0x06` | `MSG_REF_UPDATE_RESP` | リモート Ref 更新結果応答 |
+| `0x07` | `MSG_LAZY_FETCH_REQ` | Sparse/Shallow 向けオンデマンドオブジェクト要求 |
+| `0x08` | `MSG_LAZY_FETCH_RESP` | オンデマンド要求オブジェクトデータ返答 |
 | `0x0E` | `MSG_PROGRESS` | 進行状況テキスト（"Counting objects...", etc.） |
-| `0x0F` | `MSG_ERROR` | プロトコルレベルエラーメッセージ |
+| `0x0F` | `MSG_ERROR` | プロトコルレベル構造化エラーメッセージ |
+
+## 2.2 初期ハンドシェイクおよび機能交渉 (Capability Negotiation)
+クライアントとサーバー間の接続確立直後、双方の互換性を確立するため `MSG_HANDSHAKE_CAPABILITIES` (`0x00`) を交換する。
+
+### ペイロードレイアウト (`MSG_HANDSHAKE_CAPABILITIES`)
+```
++-------------------------------------------------------+
+| Protocol Version (uint16 BE)                          |
++-------------------------------------------------------+
+| Supported Hash Algorithms Bitmask (uint8)             |
+|   - Bit 0 (0x01): SHA-256                             |
+|   - Bit 1 (0x02): BLAKE3                              |
++-------------------------------------------------------+
+| Compression Algorithms Bitmask (uint8)               |
+|   - Bit 0 (0x01): Deflate/zlib                        |
+|   - Bit 1 (0x02): Brotli                              |
++-------------------------------------------------------+
+| Capabilities Bitmask (uint32 BE)                      |
+|   - Bit 0 (0x0001): CAP_THIN_PACK                     |
+|   - Bit 1 (0x0002): CAP_LAZY_FETCH (Sparse/Shallow)  |
+|   - Bit 2 (0x0004): CAP_SIDEBAND_PROGRESS             |
++-------------------------------------------------------+
+```
+
+## 2.3 明示的構造化エラーフレーム (`MSG_ERROR: 0x0F`)
+通信中にエラーが発生した場合、`MSG_ERROR` フレームを返却する。
+```
++-------------------------------------------------------+
+| Error Code (uint16 BE)                                |
++-------------------------------------------------------+
+| Error Message Length (varint)                         |
++-------------------------------------------------------+
+| Error Message Bytes (UTF-8)                           |
++-------------------------------------------------------+
+```
+- 主なエラーコード:
+  - `0x0001`: `ERR_UNSUPPORTED_VERSION` (プロトコルバージョン不適合)
+  - `0x0002`: `ERR_HASH_ALGO_MISMATCH` (ハッシュアルゴリズム不適合)
+  - `0x0003`: `ERR_NON_FAST_FORWARD` (Push 時の非 Fast-Forward 更新拒否)
+  - `0x0004`: `ERR_OBJECT_NOT_FOUND` (リクエストオブジェクト非存在)
 
 ---
 

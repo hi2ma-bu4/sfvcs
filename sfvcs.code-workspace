@@ -4,5 +4,32 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"cSpell.words": [
+			"APFS",
+			"CRDT",
+			"EWAH",
+			"Fanout",
+			"Jaccard",
+			"Packfile",
+			"Prolly",
+			"Reflog",
+			"SFBM",
+			"SFCK",
+			"SFCM",
+			"SFDR",
+			"SFFL",
+			"SFIX",
+			"SFPK",
+			"SFSL",
+			"SFSQ",
+			"sfvcs",
+			"sfvcsattributes",
+			"sfvcsconfig",
+			"sfvcsignore",
+			"SPIX",
+			"varint",
+			"xattr"
+		]
+	}
 }
