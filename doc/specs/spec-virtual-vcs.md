@@ -83,20 +83,20 @@ export interface StorageAdapter {
 ---
 
 ## 3.2 `CryptoAdapter` インターフェース
-ハッシュ計算（SHA-256 / FastCDC 用 Gear Hash）を抽象化する。
+ハッシュ計算（BLAKE3 / SHA-256 / FastCDC 用 Gear Hash）を抽象化する。
 
 ```typescript
 export interface CryptoAdapter {
-  /** SHA-256 ハッシュ計算 (32バイト) */
-  sha256(data: Uint8Array): Promise<Uint8Array>;
+  /** BLAKE3 または SHA-256 ハッシュ計算 (32バイト) */
+  hash(data: Uint8Array, algo?: 'blake3' | 'sha256'): Promise<Uint8Array>;
 
   /** Gear Hash または WebAssembly (WASM) 加速ハッシュの実行 */
   fastCdcHash?(data: Uint8Array, offset: number, length: number): number;
 }
 ```
 
-- **Node.js**: `node:crypto` を使用。
-- **ブラウザ**: Web Crypto API (`crypto.subtle.digest('SHA-256', ...)`) を使用。
+- **Node.js**: `node:crypto` または BLAKE3 ネイティブバインディングを使用。
+- **ブラウザ**: Web Crypto API または BLAKE3 WASM モジュールを使用。
 - **WASM 加速**: C/Rust からコンパイルされた WebAssembly モジュールを組み込むことで、大量ハッシュ計算および FastCDC 処理を物理ネイティブに近い性能に引き上げる。
 
 ---
@@ -163,16 +163,24 @@ const restoredFiles = await repo.checkoutVirtualTree(commitCid);
 
 ---
 
-# 5. モジュール分離と依存関係ルール
+# 5. ブラウザ環境でのリソース制限対策・Web Worker ストリーミング処理仕様
 
-仮想 VCS 機能の導入に伴い、コードベースおよび設定の依存関係は以下のように厳格に分類・分離する。
+Web ブラウザのメインスレッド（UI スレッド）のフリーズを防ぎ、巨大ファイルや大規模リポジトリを安定処理するための仕様。
 
-1. **`@sfvcs/core`**:
-   - 外部依存ゼロ（Pure TypeScript）。
-   - ブラウザ・Node.js 双方で同一のバイナリが動作。
-2. **`@sfvcs/wasm`**:
-   - FastCDC、Gear Hash、および Winnowing Fingerprint を高速化するための WebAssembly モジュール（任意導入）。
-3. **`@sfvcs/adapter-browser`**:
-   - `IndexedDB`, `OPFS`, `WebCrypto`, `CompressionStream` アダプタ集。
-4. **`@sfvcs/adapter-node`**:
-   - `node:fs`, `node:crypto`, `node:zlib` アダプタ集。
+## 5.1 Web Worker ストリーミング実行モデル
+重い処理（FastCDC チャンク分割、BLAKE3 ハッシュ計算、Prolly Tree 構築、Diff 探索）は、専用の **Dedicated Web Worker** 内で実行する。
+
+- メインスレッドと Worker 間は `ReadableStream` / `WritableStream` および `Transferable Objects` (ArrayBuffer の所有権移動) を用いて、零コピー (Zero-Copy) データ転送を行う。
+
+## 5.2 OPFS / IndexedDB 巨大アセット Chunked Handling
+- メモリ上限（例: 256 MB 〜 512 MB）を超過する巨大アセット処理時、ファイル全体を単一の `Uint8Array` に展開せず、一定バッファ枠（例: **4 MiB 〜 16 MiB チャンク**）ごとにストリーミング読み出しを行う。
+- OPFS 利用時は `FileSystemSyncAccessHandle` を用いて、非同期 I/O オーバーヘッドを抑えた低レイテンシなチャンクドアクセスを実現する。
+
+---
+
+# 6. モジュール分離と依存関係ルール
+
+1. **`@sfvcs/core`**: 外部依存ゼロ（Pure TypeScript）。ブラウザ・Node.js 双方で同一バイナリが動作。
+2. **`@sfvcs/wasm`**: FastCDC、BLAKE3、Winnowing Fingerprint 高速化用 WebAssembly モジュール。
+3. **`@sfvcs/adapter-browser`**: `IndexedDB`, `OPFS`, `WebCrypto`, `CompressionStream` アダプタ集。
+4. **`@sfvcs/adapter-node`**: `node:fs`, `node:crypto`, `node:zlib` アダプタ集。

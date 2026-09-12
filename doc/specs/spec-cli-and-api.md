@@ -14,6 +14,7 @@
 - **構文**: `sfvcs init [directory]`
 - **オプション**:
   - `--default-branch <name>`: 初期ブランチ名指定（デフォルト: `main`）
+  - `--hash <algo>`: CID ハッシュアルゴリズム指定 (`blake3` | `sha256`, デフォルト: `blake3`)
 - **動作**:
   - 対象ディレクトリ配下に `.sfvcs/` ディレクトリ構造を作成。
   - 初期化完了メッセージを出力。
@@ -30,7 +31,7 @@
 ```json
 {
   "branch": "main",
-  "commit": "013a4f8901234567890123456789012345678901234567890123456789012345",
+  "commit": "023a4f8901234567890123456789012345678901234567890123456789012345",
   "untracked": ["newfile.txt"],
   "modified": ["src/index.ts"],
   "deleted": ["old.txt"],
@@ -49,6 +50,7 @@
 - **オプション**:
   - `-m, --message <msg>`: コミットメッセージ（必須）
   - `--author <name <email>>`: 作成者情報の上書き
+  - `--sign`: コミットへの暗号学的電子署名（Ed25519/SSH/GPG）を付与。
 - **動作**:
   1. ワークツリーをスキャンし、変更ファイルを FastCDC / Sequence Tree 化。
   2. 新しい Directory Root を構築。
@@ -67,15 +69,15 @@
 - **JSON 出力フォーマット (`sfvcs diff --json`)**:
 ```json
 {
-  "old_root": "01a1b2...",
-  "new_root": "01c3d4...",
+  "old_root": "02a1b2...",
+  "new_root": "02c3d4...",
   "changes": [
     {
       "type": "MOVE",
       "old_path": "src/utils.ts",
       "new_path": "src/common/utils.ts",
       "confidence": 1.0,
-      "subtree_cid": "01e5f6..."
+      "subtree_cid": "02e5f6..."
     },
     {
       "type": "MODIFY",
@@ -92,7 +94,58 @@
 
 ---
 
-## 1.5 `sfvcs fsck`
+## 1.5 `sfvcs merge`
+指定ブランチまたはコミットを現在のブランチへ 3-Way Structural Merge 合流する。
+
+- **構文**: `sfvcs merge <commit-or-branch> [options]`
+- **オプション**:
+  - `--no-ff`: Fast-forward 可能な場合でも必ずマージコミットを作成。
+  - `--abort`: 進行中の競合マージ処理を中断し元の状態に復元。
+
+---
+
+## 1.6 `sfvcs rebase`
+現在のブランチのコミット列を指定上流コミットの上へ再配置する。
+
+- **構文**: `sfvcs rebase <upstream> [options]`
+- **オプション**:
+  - `--continue`: 競合解消後に rebase 処理を再開。
+  - `--abort`: rebase 処理を中断し元の状態に復元。
+
+---
+
+## 1.7 `sfvcs cherry-pick`
+指定コミットの変更を現在の HEAD へ適用する。
+
+- **構文**: `sfvcs cherry-pick <commit>`
+
+---
+
+## 1.8 `sfvcs stash`
+未コミットの変更作業を一時退避・復元する。
+
+- **構文**: `sfvcs stash [push|pop|apply|list|drop]`
+
+---
+
+## 1.9 `sfvcs revert`
+指定コミットの変更を打ち消す新しいコミットを作成する。
+
+- **構文**: `sfvcs revert <commit>`
+
+---
+
+## 1.10 `sfvcs clone` / `sfvcs fetch` / `sfvcs push`
+リモートリポジトリとの同期を行う。
+
+- **構文**:
+  - `sfvcs clone <url> [directory] [--depth=<n>] [--sparse]`
+  - `sfvcs fetch [<remote>]`
+  - `sfvcs push [<remote>] [<branch>]`
+
+---
+
+## 1.11 `sfvcs fsck`
 リポジトリ内の全オブジェクトの暗号学的整合性および参照構造を完全検証する。
 
 - **構文**: `sfvcs fsck [options]`
@@ -103,7 +156,7 @@
 
 ---
 
-## 1.6 `sfvcs repack` / `sfvcs gc`
+## 1.12 `sfvcs repack` / `sfvcs gc`
 ルーズオブジェクトをパックファイルに集約し、不要オブジェクトを掃除する。
 
 - **構文**: `sfvcs gc [options]`
@@ -132,6 +185,19 @@ export class Repository {
   /** コミット・スナップショット作成 */
   async createCommit(options: CommitOptions): Promise<Uint8Array>;
 
+  /** 3-Way Structural Merge */
+  async merge(targetCommit: Uint8Array, options?: MergeOptions): Promise<MergeResult>;
+
+  /** 履歴再構築操作 */
+  async rebase(upstreamCommit: Uint8Array): Promise<RebaseResult>;
+  async cherryPick(commitCid: Uint8Array): Promise<CherryPickResult>;
+  async stash(action: 'push' | 'pop' | 'apply'): Promise<StashResult>;
+  async revert(commitCid: Uint8Array): Promise<RevertResult>;
+
+  /** リモート同期 */
+  async fetch(remoteName: string): Promise<FetchResult>;
+  async push(remoteName: string, branchName: string): Promise<PushResult>;
+
   /** Multi-resolution Diff 実行 */
   async diff(oldCommitOrTree: Uint8Array, newCommitOrTree: Uint8Array, options?: DiffOptions): Promise<DiffResult>;
 
@@ -151,5 +217,7 @@ export class Repository {
 | `ERR_MISSING_OBJECT` | `MissingObjectError` | 指定された CID が objects (loose/pack) 内に存在しない | `fsck` で影響範囲確認、リモート等から再取得 |
 | `ERR_CORRUPT_OBJECT` | `CorruptObjectError` | オブジェクトの計算 CID が記載 CID と不一致 | バックアップからの復元、またはオブジェクト破棄 |
 | `ERR_INVALID_CANONICAL_FORMAT` | `InvalidFormatError` | ディレクトリエントリ未ソート、または未知の Format Version | 正しい仕様でエンコードされたオブジェクトへ更新 |
+| `ERR_MERGE_CONFLICT` | `MergeConflictError` | 自動合流不可能なファイル競合を検出 | コンフリクトマーカーの修正後 `commit` |
+| `ERR_CYCLE_DETECTED` | `CycleDetectedError` | Tree Move による循環参照移動を検出 | 自動決定論解決またはユーザー手動指定 |
 | `ERR_CONCURRENT_UPDATE` | `ConcurrentUpdateError` | CAS 参照更新時に他プロセスとの書き込み競合を検出 | リトライ処理の実行 |
 | `ERR_REPOSITORY_LOCKED` | `RepositoryLockedError` | `.sfvcs/locks/` 内にロックファイルが存在 | 他プロセスの終了待機、または不要ロック削除 |

@@ -1,13 +1,16 @@
 # sfvcs アルゴリズム詳細仕様書
 
-本書は `sfvcs` における核心アルゴリズムの具体的な処理フロー、パラメタ定義、計算式、および擬似コードを明確にする仕様書である。
+本書は `sfvcs` における核心アルゴリズムの具体的な処理フロー、パラメタ定義、計算式、擬似コード、Sequence Tree 差分から行番号 (Line Offset / Unified Diff) への変換、並びに Sparse Checkout (部分チェックアウト) および Shallow History (浅い履歴) の検証ロジックを明確にする仕様書である。
 
 対象アルゴリズム：
 1. **Content-Defined Chunking (FastCDC & Gear Hash)**
 2. **Prolly Tree / Persistent Sequence Tree の構築アルゴリズム**
 3. **Multi-resolution Structural Diff エンジン**
-4. **Move / Rename / Copy 検出と Fingerprint 類似度検索（Winnowing）**
-5. **Move / Rename / Case-only Rename 最適化アルゴリズム**
+4. **Sequence Tree Chunk Diff から行番号 (Unified Diff) への変換アルゴリズム**
+5. **Move / Rename / Copy 検出と Fingerprint 類似度検索（Winnowing）**
+6. **Move / Rename / Case-only Rename 最適化アルゴリズム**
+7. **Sparse Checkout (部分チェックアウト) 境界判定アルゴリズム**
+8. **Shallow History (浅い履歴 clone) 境界判定および `fsck` 検証**
 
 ---
 
@@ -155,7 +158,6 @@ def diff_sequence_nodes(node_A: SequenceNode, node_B: SequenceNode) -> DiffResul
         return DiffResult.Unchanged()
 
     # 1. Exact Child CID Match による アンカー（アンカーポイント）特定
-    # 子CIDのLCS (Longest Common Subsequence) または Unique Anchor 検出
     anchors = find_exact_cid_anchors(node_A.children_cids, node_B.children_cids)
 
     # 2. アンカー間のギャップ (非一致区間) のみを選択的に再帰比較
@@ -164,7 +166,6 @@ def diff_sequence_nodes(node_A: SequenceNode, node_B: SequenceNode) -> DiffResul
         if gap.is_exact_match:
             diffs.append(DiffResult.Unchanged(gap.cid))
         else:
-            # ギャップ部分のみ解像度を上げて解剖
             sub_diff = diff_unmatched_subtrees(gap.sub_A, gap.sub_B)
             diffs.append(sub_diff)
 
@@ -173,9 +174,25 @@ def diff_sequence_nodes(node_A: SequenceNode, node_B: SequenceNode) -> DiffResul
 
 ---
 
-# 4. Move / Rename / Copy 検出と Fingerprint 類似度検索
+# 4. Sequence Tree 差分から行番号 (Unified Diff) への変換アルゴリズム
 
-## 4.1 Winnowing ベースの近似 Fingerprint 計算
+Sequence Tree の Chunk 単位の構造差分から、人間が可読な標準 Unified Diff 形式（`@@ -a,b +c,d @@`）と行番号 (Line Offset) を生成するアルゴリズム。
+
+## 4.1 変換処理手順
+1. **改行インデックス (Line Boundary Index) キャッシュ**:
+   各 Chunk オブジェクト (`SFCK`) について、改行文字 `\n` (0x0A) の絶対バイトオフセット列を抽出・保持。
+2. **Chunk 差分からバイトオフセット区間の確定**:
+   Multi-resolution Diff によって特定された不一致 Chunk 区間の旧ファイル内バイト範囲 $[S_{\text{old}}, E_{\text{old}}]$ と新ファイル内バイト範囲 $[S_{\text{new}}, E_{\text{new}}]$ を決定。
+3. **バイト範囲の行番号変換**:
+   改行インデックステーブルを用いて、$S_{\text{old}}$ 直前の改行数から旧ファイル開始行番号 $a$、$E_{\text{old}}$ までの改行数から行数 $b$ を求める（新ファイル $c, d$ も同様）。
+4. **Chunk 内 Meyers Line Diff 実行**:
+   不一致 Chunk の該当バイト区間のみをメモリ上で改行分割し、標準的な Meyers Diff を実行して行レベルの `+` / `-` パッチ行を確定・整形出力する。
+
+---
+
+# 5. Move / Rename / Copy 検出と Fingerprint 類似度検索
+
+## 5.1 Winnowing ベースの近似 Fingerprint 計算
 
 ファイル・サブルーチンの類似度判定のため、**Winnowing** アルゴリズムによりスケッチ（Fingerprint）を生成する。
 
@@ -184,16 +201,11 @@ def diff_sequence_nodes(node_A: SequenceNode, node_B: SequenceNode) -> DiffResul
 
 ```python
 def compute_winnowing_fingerprint(data: bytes) -> List[uint32]:
-    # 1. 全 k-gram のローリングハッシュ計算
     hashes = [gear_hash(data[i:i+16]) for i in range(len(data) - 15)]
-    
-    # 2. ウィンドウ w 内の最小ハッシュ値を抽出
     fingerprints = set()
-    min_pos = -1
     
     for i in range(len(hashes) - 31):
         window = hashes[i:i+32]
-        # ウィンドウ内の最小値のインデックスを選択
         min_val = min(window)
         fingerprints.add(min_val)
 
@@ -202,24 +214,18 @@ def compute_winnowing_fingerprint(data: bytes) -> List[uint32]:
 
 ---
 
-# 5. Move / Rename / Case-only Rename 最適化アルゴリズム
+# 6. Move / Rename / Case-only Rename 最適化アルゴリズム
 
-ファイル移動・リネーム・大文字小文字の変更・ディレクトリ一括移動を高精度かつ高速に判定するための最適化アルゴリズム群。
-
-## 5.1 $O(1)$ ディレクトリサブツリー一括リネーム (Directory Subtree Rename)
+## 6.1 $O(1)$ ディレクトリサブツリー一括リネーム (Directory Subtree Rename)
 
 サブディレクトリ（例: `src/old_dir/` 以下の数千ファイル）が一括移動された場合、個別ファイル比較を一切行わず、$O(1)$ でディレクトリ単位のリネームとして検出する。
 
 ```python
 def detect_directory_renames(old_tree: DirectoryNode, new_tree: DirectoryNode) -> List[RenameItem]:
-    # 1. 旧ツリーから削除された全 Directory Node の (CID -> path) マップを作成
     deleted_dirs = collect_deleted_directory_cids(old_tree, new_tree)
-    # 2. 新ツリーに追加された全 Directory Node の (CID -> path) マップを作成
     added_dirs = collect_added_directory_cids(old_tree, new_tree)
-    
     directory_renames = []
     
-    # 3. Directory CID の完全一致を比較 ($O(1)$)
     for cid, old_dir_path in deleted_dirs.items():
         if cid in added_dirs:
             new_dir_path = added_dirs[cid]
@@ -229,21 +235,12 @@ def detect_directory_renames(old_tree: DirectoryNode, new_tree: DirectoryNode) -
                 confidence=1.00,
                 subtree_cid=cid
             ))
-            # このサブディレクトリ配下の個々のファイル走査を Fast-Path スキップ
             skip_subtree_inspection(old_dir_path, new_dir_path)
             
     return directory_renames
 ```
 
-## 5.2 大文字小文字のみの変更検出 (Case-only Rename Detection)
-
-Windows (NTFS) や macOS (APFS デフォルト) などのケースインセンシティブな環境において、`foo.ts` から `Foo.ts` へのリネームを競合なく検知する。
-
-### 判定手順
-1. 旧スナップショットのパス集合 `OldPaths` から小文字化マップ `Map<lowercase_path, original_path>` を作成。
-2. 新スナップショットのパス `NewPath` について：
-   - `NewPath` が `OldPaths` に直接存在せず（ファイル削除と新規追加に見える）、かつ `NewPath.toLowerCase()` が小文字化マップにヒットする場合。
-   - かつ `Content_CID` が一致、または類似度が閾値以上である場合、`CASE_ONLY_RENAME`（大文字小文字変更）として判定。
+## 6.2 大文字小文字のみの変更検出 (Case-only Rename Detection)
 
 ```python
 def detect_case_only_renames(deleted_files: List[FileItem], added_files: List[FileItem]) -> List[RenameItem]:
@@ -264,7 +261,7 @@ def detect_case_only_renames(deleted_files: List[FileItem], added_files: List[Fi
     return case_renames
 ```
 
-## 5.3 複合信頼度スコア計算 (Composite Confidence Score)
+## 6.3 複合信頼度スコア計算 (Composite Confidence Score)
 
 一部内容が変更された移動 (`MOVE + MODIFY`) において、以下の 3 つの要素を重み付け加算して最終スコア $S \in [0.0, 1.0]$ を算出する。
 
@@ -275,3 +272,26 @@ $$S = w_1 \cdot \text{Similarity}_{\text{Content}} + w_2 \cdot \text{Similarity}
 - **$w_3 = 0.15$**: 親ディレクトリ構造・同層隣接ファイルの CID 一致率。
 
 $S \ge \text{renameThreshold}$（デフォルト: **0.65**）の場合に `MOVE + MODIFY` 候補として採用する。
+
+---
+
+# 7. Sparse Checkout (部分チェックアウト) 境界判定アルゴリズム
+
+リポジトリ全体の一部サブディレクトリのみを作業ツリーにチェックアウト・更新するアルゴリズム。
+
+## 7.1 定義と判定ルール
+- `.sfvcs/config` または `.sfvcs/sparse-checkout` 内にチェックアウト対象パスパターン（例: `src/core/*`）を定義。
+- **Traversal Algorithm**:
+  Directory Tree 下降時、ディレクトリエントリのパスが Sparse パターンにマッチしない場合、その `Directory Node` (`SFDR`) の配下走査および物理ディスクへの書き出しをスキップする。ただし、オブジェクトストア内には CID 参照を保持するため、コミット作成時に未チェックアウト領域のデータが破壊されることはない。
+
+---
+
+# 8. Shallow History (浅い履歴 clone) 境界判定および `fsck` 検証
+
+コミット履歴の深さを指定（例: `--depth=1`）してクローン・取得するアルゴリズム。
+
+## 8.1 Shallow Root (浅い境界) の記録
+- 取得を中断した最古のコミット CID 群を `.sfvcs/shallow` ファイルに記録。
+
+## 8.2 Shallow `fsck` 検証ルール
+- `sfvcs fsck` 実行時、通常のコミットオブジェクト検証では全 Parent Commit CID の存在を必須とするが、`.sfvcs/shallow` に記載されたコミット CID については **「Parent Commit 非存在」を正常（Missing Parent Allowed）** として扱い、検証エラーを抑制する。

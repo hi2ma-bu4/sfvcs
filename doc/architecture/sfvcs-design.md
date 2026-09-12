@@ -15,8 +15,10 @@
 詳細なバイナリレイアウト、具体アルゴリズムの擬似コード、パックファイル物理フォーマット、および CLI/API インターフェースについては、以下の専用詳細仕様書を参照すること。
 
 - **[バイナリフォーマット・カノニカルシリアライズ詳細仕様書](../specs/spec-binary-format.md)** (`doc/specs/spec-binary-format.md`)
-- **[アルゴリズム詳細仕様書 (FastCDC, Prolly Tree, Diff, Move/Rename最適化)](../specs/spec-algorithms.md)** (`doc/specs/spec-algorithms.md`)
-- **[ストレージ構造・パックファイル詳細仕様書](../specs/spec-storage.md)** (`doc/specs/spec-storage.md`)
+- **[アルゴリズム詳細仕様書 (FastCDC, Prolly Tree, Diff, Line Offset, Move/Rename最適化)](../specs/spec-algorithms.md)** (`doc/specs/spec-algorithms.md`)
+- **[ストレージ構造・パックファイル・Index・Reflog詳細仕様書](../specs/spec-storage.md)** (`doc/specs/spec-storage.md`)
+- **[3-Way Structural Merge ・ CRDT 競合解決詳細仕様書](../specs/spec-merge.md)** (`doc/specs/spec-merge.md`)
+- **[リモート同期 ・ Wire Protocol 詳細仕様書](../specs/spec-network.md)** (`doc/specs/spec-network.md`)
 - **[仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB) 詳細仕様書](../specs/spec-virtual-vcs.md)** (`doc/specs/spec-virtual-vcs.md`)
 - **[設定ファイル・Ignore・属性詳細仕様書 (.sfvcsconfig, .sfvcsignore, .sfvcsattributes)](../specs/spec-config-and-attributes.md)** (`doc/specs/spec-config-and-attributes.md`)
 - **[CLI コマンド・Core API・エラー処理詳細仕様書](../specs/spec-cli-and-api.md)** (`doc/specs/spec-cli-and-api.md`)
@@ -45,16 +47,18 @@
 
 主な設計思想は以下の通り。
 
-1. データをcontent-addressed objectとして扱う
+1. データをcontent-addressed objectとして扱う (標準CID: **BLAKE3 [0x02]**, 互換: SHA-256 [0x01])
 2. immutableなデータ構造を基本とする
 3. 過去のsnapshot間で共通する構造を可能な限り共有する
-4. ファイル内容を単一blobではなくrecursiveなsequence treeとして保持する
+4. ファイル内容を単一blobではなくrecursiveな sequence tree (Prolly Tree) として保持する
 5. content-defined chunkingによって変更位置に依存しにくいchunk境界を作る
 6. 上位Nodeもcontent identityを持つ
 7. 同一内容のNodeは複数のsnapshotから共有する
-8. diffはrootから必要な部分だけ解像度を上げながら比較する
+8. diffはrootから必要な部分だけ解像度を上げながら比較する (Multi-resolution Diff)
 9. MOVE / COPY / RENAMEなどはcanonical storageに記録せず、snapshot間の比較結果から導出する
 10. diff用の近似検索indexはcanonical storageとは分離し、再構築可能なderived dataとする
+11. 3-Way Structural Merge により Prolly Tree 構造および CRDT 研究に基づく確定的な合流・競合解決を行う
+12. Prolly Tree ルート CID 比較による対数時間 $O(\log N)$ 最小差分交渉 Wire Protocol を備える
 
 最終的には、
 
@@ -137,9 +141,9 @@ Content ID。
 
 Objectのcanonical serializationから計算されるcontent identity。
 
-現段階ではSHA-256を第一候補とする。
+デフォルトは **BLAKE3 (32バイト)** とする。
 
-将来的にBLAKE3等を検討する可能性はある。
+互換・検証用に **SHA-256** もサポートする。
 
 CIDは以下を目的とする。
 
@@ -457,6 +461,7 @@ Commitは少なくとも以下を持つ。
         author
         timestamp
         message
+        signature
     }
 
 `root`はsnapshotのroot directory CID。
@@ -522,7 +527,7 @@ Directory NodeのCIDは、canonicalizedされたentry集合から決定する。
 
 例えば、
 
-    name
+    name (UTF-8, Unicode NFC)
     type
     child CID
     mode等の必要なmetadata
@@ -601,6 +606,7 @@ metadata候補:
 - mode
 - symlink information
 - file type
+- extended attributes (xattr)
 - 必要に応じた追加metadata
 
 mtimeは原則としてcontent identityに含めない。
@@ -1540,7 +1546,7 @@ DirectoryそのものもCIDを持つため、
 
 となれば、directory subtree全体のrename候補を作れる。
 
-これはfile単位でrenameを検出するより効率的。
+消去法でfile単位でrenameを検出するより効率的。
 
 ---
 
@@ -1821,18 +1827,18 @@ format version変更時にはCIDも変化する可能性がある。
 
 # 67. Hash Algorithm
 
-第一候補:
+標準デフォルト:
 
-    SHA-256
+    BLAKE3 (32バイト, algo_id = 0x02)
+
+互換・検証用:
+
+    SHA-256 (32バイト, algo_id = 0x01)
 
 理由:
 
-- Node.js標準cryptoで実装可能
-- 外部依存不要
-- 十分に成熟
+- 高速な並行ハッシュ計算可能
 - cryptographic identityとして扱える
-
-BLAKE3は性能面で有力だが、初期実装では依存を増やさないことを優先する。
 
 ---
 
@@ -2819,14 +2825,14 @@ parallelizationはbenchmarkで必要性を確認してから導入する。
 
 # 112. Hashing
 
-SHA-256はNode.js cryptoを利用する。
+BLAKE3 は WASM / ネイティブモジュール、SHA-256 は Node.js crypto を利用する。
 
 大量hashでCPUがボトルネックになる場合、
 
 - streaming hash
 - batching
 - worker_threads
-- BLAKE3
+- BLAKE3 (並列ハッシュ計算)
 
 を検討する。
 
@@ -3324,7 +3330,11 @@ Kleppmann et al.
 本設計書および詳細仕様書に基づき確定された標準パラメータ値を以下に示す。
 
     Hash アルゴリズム:
-        SHA-256 (33バイト固定長 CID: [0x01][32バイトHash])
+        BLAKE3 (33バイト固定長 CID: [0x02][32バイトHash])
+        (SHA-256 [0x01] も同等にサポート)
+
+    パス正規化ルール:
+        Unicode NFC (Normalization Form C) 統一 / POSIX スラッシュ区切り
 
     Leaf CDC (FastCDC):
         MIN_SIZE    = 2 KiB (2,048 B)
@@ -3344,11 +3354,11 @@ Kleppmann et al.
     Winnowing Fingerprint:
         k-gram = 16 bytes
         window = 32 bytes
-        Jaccard 類似度閾値 = 0.70
+        Jaccard 類似度閾値 = 0.65
 
     Packfile:
         Magic = "SFPK"
-        圧縮   = zlib / Deflate (Level 6)
+        圧縮   = Thin Delta (ofs-delta / ref-delta) + Deflate
 
 ---
 

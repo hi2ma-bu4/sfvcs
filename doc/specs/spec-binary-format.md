@@ -17,25 +17,29 @@
   - `uint64`: 8バイト固定
   - `varint` (Variable-length Integer): Protocol Buffers 形式の unsigned LEB128 (7ビットごとに区切り、最上位ビットで継続を表現)。小さな整数のバイト数を短縮するために使用する。
 
-## 1.2 文字列表現
-- **文字列**: UTF-8 エンコーディングを使用する。
-- **文字列レイアウト**:
+## 1.2 文字列表現および Unicode NFC パス正規化ルール
+クロスプラットフォーム（Windows, macOS, Linux）環境における整合性を保証するため、すべてのパス文字列および名前文字列は以下の規約に従う。
+
+- **文字コード**: UTF-8 エンコーディング。
+- **Unicode 正規化形態**: **Unicode Normalization Form C (NFC)** を必須とする。macOS (APFS/HFS+) などから入力された NFD (Decomposed Unicode: 例: `か` + `゛`) パス文字列は、オブジェクト化前に必ず NFC (Composed Unicode: 例: `が`) に変換・統一しなければならない。
+- **パス文字列レイアウト**:
   ```
-  [length: varint][utf8_bytes: length バイト]
+  [length: varint][utf8_bytes: length バイト (NFC正規化済み)]
   ```
-- **パス文字列**:
+- **パス区切り文字**:
   - ディレクトリ区切り文字は常に `/`（POSIX形式）を使用する。
   - 先頭および末尾の `/` は禁止（ルート以外）。
   - `.` や `..`、連続する `//` は正規化により排除する。
 
-## 1.3 CID (Content Identifier) 表現
-- **CID アルゴリズム**: デフォルトは **SHA-256**（32バイト）。
+## 1.3 CID (Content Identifier) 表現および BLAKE3 デフォルト仕様
+`sfvcs` では、デフォルトの CID ハッシュアルゴリズムとして **BLAKE3 (32バイト)** を採用する。互換性および既存リポジトリ検証のため **SHA-256 (32バイト)** も同一リポジトリ内で並行サポートする。
+
 - **CID データ構造**:
   ```
   [algo_id: uint8][hash_bytes: N バイト]
   ```
-  - `algo_id = 0x01`: SHA-256 (32バイト)
-  - `algo_id = 0x02`: BLAKE3 (32バイト)（将来拡張用）
+  - `algo_id = 0x02`: **BLAKE3 (32バイト)**（新リポジトリの標準デフォルト）
+  - `algo_id = 0x01`: **SHA-256 (32バイト)**（互換・レガシー用）
 - 本バイナリ内での CID 参照（子ノード CID など）は、上記 `[algo_id][hash_bytes]` の 33 バイト固定長で保持する。
 
 ---
@@ -69,8 +73,13 @@
 
 ## 2.3 CID 計算式
 ```
-CID_SHA256 = SHA256( DomainTag || FormatVersion || PayloadLength || Payload )
-CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
+# BLAKE3 (algo_id = 0x02) デフォルトの場合
+CID_Hash  = BLAKE3( DomainTag || FormatVersion || PayloadLength || Payload )
+CID_Bytes = 0x02 (BLAKE3タグ) || CID_Hash (32バイト)  [計33バイト]
+
+# SHA-256 (algo_id = 0x01) の場合
+CID_Hash  = SHA256( DomainTag || FormatVersion || PayloadLength || Payload )
+CID_Bytes = 0x01 (SHA-256タグ) || CID_Hash (32バイト)  [計33バイト]
 ```
 
 ---
@@ -130,7 +139,7 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 ---
 
 ## 3.4 File Node (`SFFL`)
-ファイルのメタデータおよびコンテンツ（Sequence Root または Small Inline Bytes）を保持する。
+ファイルのメタデータ、アクセス権限、拡張属性 (xattr) およびコンテンツ（Sequence Root または Small Inline Bytes）を保持する。
 
 ### ペイロードレイアウト
 ```
@@ -141,6 +150,11 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 +-------------------------------------------------------+
 | Total File Size in Bytes (uint64)                      |
 +-------------------------------------------------------+
+| Extended Attributes (xattr) Count (varint)            |
++-------------------------------------------------------+
+| Array of xattr entries:                               |
+|   [key: String][val_len: varint][val_bytes: bytes]    |
++-------------------------------------------------------+
 | Content Storage Type (uint8)                          |
 +-------------------------------------------------------+
 | Content Payload (インラインバイト OR Content Root CID) |
@@ -149,6 +163,7 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 
 #### File Flags 仕様
 - `0x01` (`FILE_EXEC`): 実行可能ファイル権限 (例: `0755`)
+- `0x02` (`FILE_HAS_XATTR`): 拡張属性 (xattr) を保持している場合
 
 #### Content Storage Type 仕様
 - `0x00` (`CONTENT_INLINE`):
@@ -162,11 +177,13 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 ---
 
 ## 3.5 Directory Node (`SFDR`)
-ディレクトリ直下のファイルおよびサブディレクトリのリスト。
+ディレクトリ自体のメタデータ (Unix Mode, xattr) 直下のファイルおよびサブディレクトリのリスト。
 **正規化ルール**: エントリは名前に基づき **UTF-8 バイト順（Lexicographical order）** で昇順ソートされていなければならない。重複名は禁止。
 
 ### ペイロードレイアウト
 ```
++-------------------------------------------------------+
+| Directory Permissions / Mode (uint32)                 |
 +-------------------------------------------------------+
 | Entry Count (varint)                                  |
 +-------------------------------------------------------+
@@ -179,7 +196,7 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 +-------------------------------------------------------+
 | Entry Name Length (varint)                            |
 +-------------------------------------------------------+
-| Entry Name Bytes (UTF-8)                              |
+| Entry Name Bytes (UTF-8, NFC正規化済み)               |
 +-------------------------------------------------------+
 | Entry Type (uint8)                                    |
 +-------------------------------------------------------+
@@ -195,7 +212,7 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 ---
 
 ## 3.6 Commit Object (`SFCM`)
-コミットメタデータおよびスナップショット（ルートディレクトリ）の参照。
+コミットメタデータ、スナップショット参照、および暗号学的電子署名（Ed25519 / SSH / GPG）フィールドを保持する。
 
 ### ペイロードレイアウト
 ```
@@ -224,7 +241,21 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 +-------------------------------------------------------+
 | Commit Message Bytes (Length-prefixed UTF-8 String)   |
 +-------------------------------------------------------+
+| Signature Type (uint8)                                |
++-------------------------------------------------------+
+| Signature Bytes Length (varint)                       |
++-------------------------------------------------------+
+| Signature Bytes (可変長)                              |
++-------------------------------------------------------+
 ```
+
+#### Signature Type 仕様
+- `0x00` (`SIG_NONE`): 署名なし
+- `0x01` (`SIG_ED25519`): Ed25519 生署名バイト (64バイト)
+- `0x02` (`SIG_SSH`): SSH 署名フォーマット文字列 (OpenSSH `ssh-keygen -Y sign`)
+- `0x03` (`SIG_GPG`): GPG / PGP ASCII Armor 署名ブロック文字列
+
+※ 署名計算対象データ: `Signature Type` 以前の全フィールドデータバイト列。
 
 ---
 
@@ -232,11 +263,13 @@ CID_Bytes  = 0x01 (SHA-256タグ) || CID_SHA256 (32バイト)  [計33バイト]
 
 すべての実装は、オブジェクトのロード時および `sfvcs fsck` 実行時に以下のルールを検証しなければならない。
 
-1. **CID 一致性**: オブジェクトバイト列から計算した CID と、格納されているファイル名/インデックスの CID が厳密に一致すること。
-2. **正規化検証**:
+1. **CID 一致性**: オブジェクトバイト列から計算した CID (`0x02 BLAKE3` または `0x01 SHA-256`) が記載 CID と厳密に一致すること。
+2. **NFC パス正規化検証**: エントリ名およびパス文字列が Unicode NFC 形式でエンコードされていること。
+3. **正規化検証**:
    - `SFDR`（Directory）内のエントリが正確に UTF-8 バイト昇順に並んでいること。
    - `SFSQ`（Sequence）内の Logical Length の合計が `Logical Subtree Byte Length` と正確に一致すること。
-3. **型参照の正当性**:
+4. **型参照の正当性**:
    - Directory の `ENTRY_FILE` は `SFFL` オブジェクトを指していなければならない。
    - Directory の `ENTRY_DIRECTORY` は `SFDR` オブジェクトを指していなければならない。
    - Sequence Node の `FLAG_LEAF_CHILDREN` 時、全参照先 CID は `SFCK` オブジェクトでなければならない。
+5. **電子署名検証**: 署名が付与されているコミットオブジェクトについて、公開鍵または信頼できるキーリングと照合して改ざんがないことを確認すること。
