@@ -7,7 +7,7 @@
 
 本設計書は、JSON / YAML / Lockfile / TOML などの構造化データに対する言語非依存セマンティック 3-Way Structural Merge、および Fugue Sequence CRDT によるリアルタイム協調編集アライメントの基本設計書である。
 
-本書は `doc/specs/spec-merge.md` の第7節 (7.1), 第8節 (8.1) および `doc/01_architecture/sfvcs-design.md` の第171.6, 171.8節の仕様を完全網羅し、カプセル化された Semantic & Realtime Merge Service モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-merge.md` の第7節 (7.1), 第8節 (8.1) および `doc/01_architecture/sfvcs-design.md` の第171.6, 171.8節の仕様を完全網羅し、カプセル化された Semantic & Realtime Merge Service モジュールとして詳細を定義する。
 
 ---
 
@@ -46,7 +46,10 @@
    - Ours: `{"a": 10, "b": 2}`
    - Theirs: `{"a": 1, "b": 20}`
    - **Merged Output**: `{"a": 10, "b": 20}` (自動競合解消)
-3. **配列 (Array) の 3-Way マージ**: 配列要素に対しては Sequence Tree Alignment または Fugue CRDT を適用して行・要素の順序整合性を維持。
+3. **キーの削除と更新の競合**:
+   - 一方がキーの値を更新し、他方がそのキーを削除した場合は、構造化コンフリクトファイル `.sfvcs/merge-state` に記録。
+4. **配列 (Array) の 3-Way マージ**:
+   配列要素に対しては Sequence Tree Alignment または Fugue CRDT を適用して行・要素の順序整合性を維持。
 
 ---
 

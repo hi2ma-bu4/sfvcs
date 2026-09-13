@@ -7,7 +7,7 @@
 
 本設計書は、ユーザーがターミナルから操作する CLI コマンドインターフェース、TypeScript / Node.js 用 Core API (Facade)、および一貫した構造化エラー（Error Taxonomy）の基本設計書である。
 
-本書は `doc/specs/spec-cli-and-api.md` の全セクション（第1, 2, 3節）および `doc/01_architecture/sfvcs-design.md` の全コマンド要求仕様を完全網羅し、カプセル化された Controller レイヤーとして詳細を定義する。
+本書は `doc/02_specs/spec-cli-and-api.md` の全セクション（第1, 2, 3節）および `doc/01_architecture/sfvcs-design.md` の全コマンド要求仕様を完全網羅し、カプセル化された Controller レイヤーとして詳細を定義する。
 
 ---
 
@@ -38,7 +38,7 @@
 
 # 3. CLI サブコマンド詳細仕様
 
-全 15 個の主要サブコマンドとオプション定義:
+全 15 個（含 `fetch` / `push` 明記）の主要サブコマンドとオプション定義:
 
 1. **`sfvcs init [--bare] [directory]`**: リポジトリを初期化。
 2. **`sfvcs status [--short]`**: ワーキングツリーとインデックスの変更状態を表示。
@@ -49,7 +49,7 @@
 7. **`sfvcs cherry-pick <commit>`**: 個別コミットの適用。
 8. **`sfvcs stash [save|pop|list]`**: 作業の退避・復元。
 9. **`sfvcs revert <commit>`**: コミット打ち消し。
-10. **`sfvcs clone / fetch / push`**: リモート同期。
+10. **`sfvcs clone <url> [dir]` / `sfvcs fetch [<remote>]` / `sfvcs push [<remote>] [<branch>]`**: リモート同期オペレーション。
 11. **`sfvcs bisect [start|good|bad|reset]`**: バグ探査。
 12. **`sfvcs blame <file>`**: 行・トークン追跡。
 13. **`sfvcs submodule [add|update|status]`**: サブモジュール操作。
@@ -71,6 +71,8 @@ export class SfvcsRepository {
   public async commit(message: string, options?: CommitOptionsModel): Promise<Uint8Array>;
   public async merge(targetBranch: string): Promise<MergeResultModel>;
   public async diff(oldTreeCid?: Uint8Array, newTreeCid?: Uint8Array): Promise<DiffResultModel>;
+  public async fetch(remoteName?: string): Promise<void>;
+  public async push(remoteName?: string, branchName?: string): Promise<void>;
 }
 ```
 

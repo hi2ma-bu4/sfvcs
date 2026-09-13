@@ -5,9 +5,9 @@
 
 # 1. 概要と目的
 
-本設計書は、多数のルーズオブジェクトを単一の圧縮アーカイブに束ねて I/O およびディスク容量を削減する `.pack` ファイル、高速ランダムアクセスのための `.idx` インデックス、および Thin Delta 差分探索アルゴリズムの基本設計書である。
+本設計書は、多数のルーズオブジェクトを単一の圧縮アーカイブに束ねて I/O およびディスク容量を削減する `.pack` ファイル、高速ランダムアクセスのための `.idx` インデックス、Thin Delta 差分探索アルゴリズム、およびエポック置換型並行ロックフリー Packfile 再構築 (Lockless Epoch-Based Packfile Compaction) の基本設計書である。
 
-本書は `doc/specs/spec-storage.md` の第4節 (4.1, 4.2), 第16節 (16.1) および `doc/01_architecture/sfvcs-design.md` の第171.5, 171.14節の仕様を完全網羅し、カプセル化された Packfile Storage Layer モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-storage.md` の第4節 (4.1, 4.2), 第16節 (16.1), 第19節 (19.1) および `doc/01_architecture/sfvcs-design.md` の第171.5, 171.14節の仕様を完全網羅し、カプセル化された Packfile Storage Layer モジュールとして詳細を定義する。
 
 ---
 
@@ -54,13 +54,26 @@
 ### 3.2 `.idx` (Version 2) ファイル構造
 - **Header**: `\xFFtOc` (4B) + `Version: 2` (4B LE)
 - **Fanout Table**: 256 個の 32-bit LE 累積カウントテーブル（第 1 バイトハッシュ値による二分探索高速化）。
-- **CID Table**: ソート済み 32-byte CID 配列。
+- **CID Table**: ソート済み 33-byte CID 配列。
 - **CRC32 Table**: チェックサム配列。
 - **Offset Table**: 32-bit (または 64-bit LSB) オフセット位置テーブル。
 
 ---
 
-# 4. Thin Delta 差分探索アルゴリズム (Pack Clustering & Sliding Window)
+# 4. エポック置換型並行ロックフリー Packfile 再構築 (Lockless Epoch-Based Packfile Compaction)
+
+リポジトリ再構築・最適化（`repack` / `gc`）時、動作中プロセスによる並行読み取りを妨げずにパックファイルを統合・再構築する。
+
+1. **エポック世代世代管理 (Epoch Generation)**:
+   現在の Packfile 群に対してエポック世代 $E_k$ を割り当て、新再構築パック群をエポック $E_{k+1}$ として作成。
+2. **`multi-pack-index` (MIDX) アトミック置換**:
+   旧 Index をブロックすることなく、複数の `.pack` / `.idx` を集約した `multi-pack-index` ファイルを新しく作成し、アトミックな `rename()` または Web Locks により置換。
+3. **旧ファイル回収**:
+   旧世代の読み取り操作が全て完了した時点で旧 `.pack` および関連ファイルを安全にアンリンク削除する。
+
+---
+
+# 5. Thin Delta 差分探索アルゴリズム (Pack Clustering & Sliding Window)
 
 パックファイル生成時（`sfvcs repack` / `sfvcs gc`）、圧縮率を最大化するために以下のアルゴリズムで差分基底候補を探索する。
 
@@ -70,16 +83,16 @@
 
 ---
 
-# 5. Rust / WASM Core & TypeScript インターフェース
+# 6. Rust / WASM Core & TypeScript インターフェース
 
 ```rust
 pub struct PackIndexEntry {
-    pub cid: [u8; 32],
+    pub cid: [u8; 33],
     pub crc32: u32,
     pub offset: u64,
 }
 
-pub fn search_pack_index(fanout: &[u32; 256], cids: &[[u8; 32]], target_cid: &[u8; 32]) -> Option<usize> {
+pub fn search_pack_index(fanout: &[u32; 256], cids: &[[u8; 33]], target_cid: &[u8; 33]) -> Option<usize> {
     let first_byte = target_cid[0] as usize;
     let start = if first_byte == 0 { 0 } else { fanout[first_byte - 1] as usize };
     let end = fanout[first_byte] as usize;

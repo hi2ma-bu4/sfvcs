@@ -5,9 +5,9 @@
 
 # 1. 概要と目的
 
-本設計書は、ベースコミット (Base)、自ブランチ (Ours)、他方ブランチ (Theirs) の 3 つのツリー構造から変更箇所を自動判定し統合を行う Directory Tree & File Level 3-Way Merge、エントリ変更マトリクス、および階層的 Fast-Path スキップの基本設計書である。
+本設計書は、ベースコミット (Base)、自ブランチ (Ours)、他方ブランチ (Theirs) の 3 つのツリー構造から変更箇所を自動判定し統合を行う Directory Tree & File Level 3-Way Merge、エントリ変更マトリクス、サブモジュール分岐統合調停、および階層的 Fast-Path スキップの基本設計書である。
 
-本書は `doc/specs/spec-merge.md` の第1節 (1.1), 第2節 (2.1), 第3節 (3.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Tree Merge Service モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-merge.md` の第1節 (1.1), 第2節 (2.1), 第3節 (3.1), 第10節 (10.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Tree Merge Service モジュールとして詳細を定義する。
 
 ---
 
@@ -67,7 +67,18 @@
 
 ---
 
-# 5. Rust / WASM Core & TypeScript インターフェース
+# 5. サブモジュール分岐統合時におけるマージベース自動判定および Detached HEAD 競合自動調停
+
+`ENTRY_SUBMODULE` (`0x04`) の Commit CID が双方で変更されていた場合、サブモジュール内部リポジトリの DAG においてマージベースを自動計算する。
+
+1. **Submodule Fast-Forward 判定**:
+   Submodule Commit CID が Base から一方向のみの進展であれば自動 Fast-Forward 更新。
+2. **Detached HEAD 競合調停**:
+   Submodule で分岐変更（三方分岐）が発生している場合、サブモジュール内部で自動 3-Way Merge を試み、失敗した場合は `SubmoduleConflict (Detached HEAD)` として状態永続化ファイル (`.sfvcs/merge-state`) に自動保存する。
+
+---
+
+# 6. Rust / WASM Core & TypeScript インターフェース
 
 ```rust
 pub enum MergeResultAction {
@@ -77,7 +88,7 @@ pub enum MergeResultAction {
     RecurseSubtree,
 }
 
-pub fn evaluate_tree_fastpath(base: &[u8; 32], ours: &[u8; 32], theirs: &[u8; 32]) -> MergeResultAction {
+pub fn evaluate_tree_fastpath(base: &[u8; 33], ours: &[u8; 33], theirs: &[u8; 33]) -> MergeResultAction {
     if ours == theirs {
         return MergeResultAction::AcceptOurs;
     }
@@ -100,7 +111,7 @@ export interface MergeEntryResultModel {
     baseCid?: Uint8Array;
     oursCid?: Uint8Array;
     theirsCid?: Uint8Array;
-    reason: "content" | "delete_modify" | "modify_delete" | "add_add";
+    reason: "content" | "delete_modify" | "modify_delete" | "add_add" | "submodule_detached_head";
   };
 }
 

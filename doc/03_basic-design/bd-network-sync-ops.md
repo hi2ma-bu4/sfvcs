@@ -7,7 +7,7 @@
 
 本設計書は、リモートリポジトリとの同期を実現する `clone`, `fetch`, `push` の詳細処理フロー、Sparse Submodule Sync, Dynamic Range Object Loading, Prefetch Window プロトコル, および QUIC / HTTP-3 セッション再開トークン (Session Resumption Token) の基本設計書である。
 
-本書は `doc/specs/spec-network.md` の第4節 (4.1, 4.2, 4.3), 第5節, 第6節, 第7節, 第8節 (8.1), 第9節 (9.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Remote Synchronization Service モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-network.md` の第4節 (4.1, 4.2, 4.3), 第5節, 第6節, 第7節, 第8節 (8.1), 第9節 (9.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Remote Synchronization Service モジュールとして詳細を定義する。
 
 ---
 
@@ -38,29 +38,42 @@
 # 3. 同期オペレーション詳細仕様 (`clone`, `fetch`, `push`)
 
 ### 3.1 `clone` (完全複製)
-1. 初期ハンドシェイク `MSG_HANDSHAKE_CAPABILITIES`。
-2. リモート `refs/` 一覧を取得し、目的の HEAD またはブランチ CID を決定。
-3. リモートから全ルートオブジェクトおよび依存オブジェクトを Pack Stream として連続受信して保存。
+1. 初期ハンドシェイク `MSG_HANDSHAKE_CAPABILITIES` (`0x00`) 交換。
+2. `MSG_REF_DISCOVERY` (`0x01`) を送信し、リモート `refs/` 一覧（HEAD, heads/*, tags/*）および Commit CID を取得。
+3. 目的のブランチ Root Commit CID を `MSG_TREE_NEGOTIATE_REQ` (`0x02`) で指定。
+4. サーバーから到達可能全オブジェクトを含む Pack Stream (`MSG_PACKFILE_DATA`: `0x04`) を受領・ローカルインデックス化。
 
 ### 3.2 `fetch` (差分受信)
-1. ローカル Ref とリモート Ref を比較。
-2. `bd-network-tree-negotiation` モジュールを呼び出し、差分オブジェクト CID 一覧を特定。
-3. 不足オブジェクトのみを Packfile としてストリーミング受信。
+1. ローカルの `refs/remotes/<remote>/` とリモートの `refs/heads/` 差分を計算。
+2. 差分 Commit CID につき Prolly Tree 最小差分交渉 (`MSG_TREE_NEGOTIATE_REQ` / `MSG_TREE_NEGOTIATE_RESP`) を実行。
+3. 不足 Chunk / Node / Directory / Commit のみを含む Thin Pack をストリーミング受信し `.sfvcs/objects/pack/` に永続化。
 
 ### 3.3 `push` (差分送信)
-1. リモートの最新 Ref を確認し、非 Fast-Forward 更新の場合は拒否（`--force` フラグを除く）。
-2. ローカルで不足しているオブジェクト群を即座に Thin Packfile としてビルドし、リモートへ送信。
-3. リモートで Thin Delta 解除および Reference の CAS アトミック更新。
+1. ローカルの更新 Commit CID 一覧を準備。
+2. リモートへ `MSG_TREE_NEGOTIATE_REQ` を送信し、相手側の欠落 CID リストを特定。
+3. 不足オブジェクトのみを集約した Thin Packfile を構築し `MSG_PACKFILE_DATA` でストリーミング送信。
+4. 送信完了後、アトミック参照更新リクエスト `MSG_REF_UPDATE_REQ` (`0x05`: `Expected_Old_CID` vs `New_CID`) を送信。
+5. CAS 条件を検証し成功なら `MSG_REF_UPDATE_RESP` (`0x06`) で受理。競合時は `ERR_NON_FAST_FORWARD` エラー。
 
 ---
 
-# 4. Sparse-Checkout / Lazy Fetch バッチプリフェッチ & QUIC セッション再開
+# 4. 高度プロトコル & パフォーマンス拡張仕様
 
-### 4.1 N+1 ラウンドトリップ回避バッチプリフェッチ (`MSG_PREFETCH_BATCH_REQ: 0x0D`)
-Sparse Checkout や Lazy Fetch 有効時、遅延読み込みによって個別のオブジェクト取得リクエストが頻発する N+1 ラウンドトリップ問題を回避するため、必要と予測されるサブツリーノード群の CID 一覧を一括リクエストフレーム (`MSG_PREFETCH_BATCH_REQ`) でバッチ受信する。
+### 4.1 Sparse Submodule Sync & LFS ストリーミング
+- **Sparse Submodule Sync**: 親クローン時に `CAP_LAZY_FETCH` を有効化し、`ENTRY_SUBMODULE` ルートコミットのみ取得。配下オブジェクトはアクセス時に `MSG_LAZY_FETCH_REQ` (`0x07`) で動的取得。
+- **LFS ストリーミング**: `MSG_LFS_POINTER_REQ` (`0x09`) で OID を指定し `MSG_LFS_DATA` (`0x0A`) で Range Request (RFC 7233) 方式による分割受領。
 
-### 4.2 QUIC / HTTP-3 ストリーム再開トークン (Session Resumption Token)
-ネットワーク切断時（モバイル回線切り替え等）、接続再開トークン (`Session Resumption Token`) を用いて直前のストリーム読み取りオフセット位置から 0-RTT で同期処理をシームレスに再開する。
+### 4.2 Dynamic Range Object Loading Protocol (`0x0B`, `0x0C`)
+未取得の巨大 Sequence Node / Subtree オブジェクトアクセス時、`MSG_DYNAMIC_RANGE_REQ` (`0x0B`: CID, Offset, Length) を発行し、サーバーより `MSG_DYNAMIC_RANGE_RESP` (`0x0C`) で直接部分受信する。
+
+### 4.3 Submodule Recursive Sync Protocol
+`ENTRY_SUBMODULE` 検出時、親リポジトリとネストした各サブモジュールの交渉メッセージを `Channel ID` (`0x0001`, `0x0002`...) ごとに分離・多重化し、並列交渉を実行。
+
+### 4.4 N+1 ラウンドトリップ回避バッチプリフェッチ (`MSG_PREFETCH_BATCH_REQ: 0x0D`)
+欠落 CID 要求が発生した際、50 ms または 100 CIDs までバッファリングし、単一の `MSG_PREFETCH_BATCH_REQ` (`0x0D`) として送信。サーバーは `Depth_Limit` (2階層) までの配下ツリーを先回り一括送信する。
+
+### 4.5 QUIC / HTTP-3 セッション再開トークン (`0x10`, `0x11`)
+サーバーより発行された 24時間有効な `MSG_SESSION_TOKEN` (`0x10`) を保持し、切断復旧時に 0-RTT パケットへ `MSG_RESUME_STREAM_REQ` (`0x11`) を埋め込み、中断オフセット以降のバイトストリームを再開する。
 
 ---
 
@@ -68,7 +81,7 @@ Sparse Checkout や Lazy Fetch 有効時、遅延読み込みによって個別�
 
 ```typescript
 export interface SyncProgressModel {
-  phase: "negotiating" | "downloading" | "indexing";
+  phase: "handshake" | "discovering" | "negotiating" | "downloading" | "indexing";
   receivedBytes: bigint;
   totalBytes: bigint;
   processedObjects: number;

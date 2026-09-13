@@ -5,9 +5,9 @@
 
 # 1. 概要と目的
 
-本設計書は、信頼できないサードパーティプラグインやサーバーフックを安全に分離実行する WebAssembly サンドボックスアーキテクチャ、ブラウザ環境での Web Worker ストリーミング処理、および IndexedDB / OPFS の Storage Quota Management & LRU Eviction の基本設計書である。
+本設計書は、信頼できないサードパーティプラグインやサーバーフックを安全に分離実行する WebAssembly サンドボックスアーキテクチャ（WASI / Host-Guest Bindings）、ブラウザ環境での Web Worker ストリーミング処理、および IndexedDB / OPFS の Storage Quota Management & LRU Eviction の基本設計書である。
 
-本書は `doc/specs/spec-virtual-vcs.md` の第4.1, 4.2節, 第5.1, 5.2節, 第8節, 第11節および `doc/01_architecture/sfvcs-design.md` の第171.11節の仕様を完全網羅し、カプセル化された Plugin Sandbox & Memory Service モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-virtual-vcs.md` の第4.1, 4.2節, 第5.1, 5.2節, 第8節, 第11節および `doc/01_architecture/sfvcs-design.md` の第171.11節の仕様を完全網羅し、カプセル化された Plugin Sandbox & Memory Service モジュールとして詳細を定義する。
 
 ---
 
@@ -35,12 +35,27 @@
 
 ---
 
-# 3. WebAssembly サンドボックスプラグインアーキテクチャ (WASI)
+# 3. WebAssembly サンドボックスプラグインアーキテクチャ (WASI & Host/Guest Bindings)
 
 WASM プラグインはホスト環境のメモリやファイルシステムに直接アクセスできない分離サンドボックス空間で動作させる。
 
-1. **WASI 抽象化**: プラグインからの I/O 要求はすべてホスト側フック関数（Host Imports）を介して厳格に認可・制御する。
-2. **メモリ・CPU 上限保護**: WASM モジュールの最大使用可能メモリ領域を制限（例: 256MiB）し、無限ループ対策として命令カウンタ（Fuel Limit）を設定する。
+### 3.1 Host/Guest Bindings インターフェース仕様
+プラグイン側が定義・公開するインターフェースフック（Guest Exports）およびホスト環境側が提供するシステムアクセス関数（Host Imports）の仕様。
+
+```rust
+// WASM Guest Export Hook Specification (in Rust Plugin)
+#[no_mangle]
+pub extern "C" fn sfvcs_plugin_on_pre_commit(input_ptr: *const u8, input_len: usize) -> u32 {
+    // Custom validation logic in WASM sandbox
+    0 // Success
+}
+```
+
+- **Host Imports (Host 側提供サービス)**:
+  - `logMessage(ptr, len)`: セーフティログ出力。
+  - `readObject(cid_ptr, out_ptr)`: パーミッション制御された読み取り専有アクセス。
+  - `allocMemory(size)` / `freeMemory(ptr)`: 境界境界でのリソースアロケーション。
+- **メモリ・CPU 上限保護**: WASM モジュールの最大使用可能メモリ領域を制限（例: 256MiB）し、無限ループ対策として命令カウンタ（Fuel Limit）を設定する。
 
 ---
 

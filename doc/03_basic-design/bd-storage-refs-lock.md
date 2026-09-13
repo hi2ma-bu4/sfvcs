@@ -5,9 +5,9 @@
 
 # 1. 概要と目的
 
-本設計書は、ブランチ・タグ・HEAD 等の参照 (Reference) をアトミックに更新する Compare-And-Swap (CAS) 制御、参照変更履歴である Reflog 管理、並びに孤立ロック自動復旧 (Stale Lock Recovery) と Web Locks API 統合の基本設計書である。
+本設計書は、ブランチ・タグ・HEAD 等の参照 (Reference) をアトミックに更新する Compare-And-Swap (CAS) 制御、参照変更履歴である Reflog 管理および Reflog 自動パージ・期限切れ設定 (Reflog Expiration / Pruning)、並びに孤立ロック自動復旧 (Stale Lock Recovery) と Web Locks API 統合の基本設計書である。
 
-本書は `doc/specs/spec-storage.md` の第5節 (5.1, 5.2), 第7節 (7.1, 7.2, 7.3) および `doc/01_architecture/sfvcs-design.md` の第171.13, 171.14節の仕様を完全網羅し、カプセル化された Reference & Lock Management Service モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-storage.md` の第5節 (5.1, 5.2), 第7節 (7.1, 7.2, 7.3) および `doc/01_architecture/sfvcs-design.md` の第171.13, 171.14節の仕様を完全網羅し、カプセル化された Reference & Lock Management Service モジュールとして詳細を定義する。
 
 ---
 
@@ -52,15 +52,18 @@
 
 ---
 
-# 4. Reflog (参照履歴) フォーマット & 自動パージ・期限切れ
+# 4. Reflog (参照履歴) フォーマット & 自動パージ・期限切れ (Expiration / Pruning)
 
 ### 4.1 Reflog ファイル形式 (`.sfvcs/logs/refs/heads/<branch>`)
 ```text
 0000000000000000000000000000000000000000000000000000000000000000 a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890 Alice <alice@example.com> 1672531199 +0900 commit: Initial commit
 ```
 
-### 4.2 Reflog Expiration (期限切れ設定)
+### 4.2 Reflog Expiration (期限切れ設定 & 枝払い)
 `sfvcs gc` 実行時、`gc.reflogExpire` (デフォルト 90 日) および `gc.reflogExpireUnreachable` (デフォルト 30 日) を経過した古く到達不能な Reflog エントリを自動パージする。
+
+- **到達可能性チェック**: 全活性 Reference から到達不能なコミットを参照する Reflog エントリをスキャン。
+- **アトミックパージ**: 条件を満たす行を削除した一時 Reflog ファイルを作成し、アトミックに差し替える。
 
 ---
 

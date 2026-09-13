@@ -7,7 +7,7 @@
 
 本設計書は、可変長シーケンスデータおよび順序付きキーバリューエントリ（ファイルノード、ディレクトリエントリ）を決定論的に階層化ツリー構造に変換し、差分検索および 3-Way Structural Merge を高速化する Prolly Tree (Sequence Tree) 構築アルゴリズム、病的入力フォールバック、および Dual-Mask Normalization 制御の基本設計書である。
 
-本書は `doc/specs/spec-algorithms.md` の第2節 (2.1, 2.2), 第13節 (13.1), 第16節 (16.1) および `doc/01_architecture/sfvcs-design.md` の第167.1〜167.10, 171.14節を完全網羅し、カプセル化された Sequence Tree Builder モジュールとして定義する。
+本書は `doc/02_specs/spec-algorithms.md` の第2節 (2.1, 2.2), 第13節 (13.1), 第16節 (16.1) および `doc/01_architecture/sfvcs-design.md` の第167.1〜167.10, 171.14節を完全網羅し、カプセル化された Sequence Tree Builder モジュールとして定義する。
 
 ---
 
@@ -68,7 +68,7 @@ $$\text{BoundaryCondition}(H, L) = ((H \mathbin{\&} M_1(L)) == 0) \lor ((H \math
 ```rust
 pub struct ProllyNodeEntry {
     pub key: Vec<u8>,
-    pub cid: [u8; 32],
+    pub cid: [u8; 33],
     pub length: u64,
     pub boundary_hash: [u8; 32],
 }

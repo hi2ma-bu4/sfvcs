@@ -38,9 +38,12 @@
 			"sfvcsconfig",
 			"sfvcsignore",
 			"SPIX",
+			"usize",
 			"varint",
 			"VCDIFF",
-			"xattr"
+			"WASI",
+			"xattr",
+			"Zstd"
 		]
 	}
 }
