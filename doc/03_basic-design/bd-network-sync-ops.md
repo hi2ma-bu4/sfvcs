@@ -5,7 +5,7 @@
 
 # 1. 概要と目的
 
-本設計書は、リモートリポジトリとの同期を実現する `clone`, `fetch`, `push` の詳細処理フロー、Sparse Submodule Sync, Dynamic Range Object Loading, Prefetch Window プロトコル, および QUIC / HTTP-3 セッション再開トークン (Session Resumption Token) の基本設計書である。
+本設計書は、リモートリポジトリとの同期を実現する `clone`, `fetch`, `push` の詳細処理フロー、Sparse Submodule Clone & LFS ストリーミング同期、Dynamic Range Object Loading, Prefetch Window プロトコル, サブモジュール再帰同期プロトコル (Submodule Recursive Sync Protocol), および QUIC / HTTP-3 セッション再開トークン (Session Resumption Token) の基本設計書である。
 
 本書は `doc/02_specs/spec-network.md` の第4節 (4.1, 4.2, 4.3), 第5節, 第6節, 第7節, 第8節 (8.1), 第9節 (9.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Remote Synchronization Service モジュールとして詳細を定義する。
 
@@ -59,8 +59,8 @@
 
 # 4. 高度プロトコル & パフォーマンス拡張仕様
 
-### 4.1 Sparse Submodule Sync & LFS ストリーミング
-- **Sparse Submodule Sync**: 親クローン時に `CAP_LAZY_FETCH` を有効化し、`ENTRY_SUBMODULE` ルートコミットのみ取得。配下オブジェクトはアクセス時に `MSG_LAZY_FETCH_REQ` (`0x07`) で動的取得。
+### 4.1 Sparse Submodule Clone & LFS ストリーミング同期
+- **Sparse Submodule Clone**: クローン時に `--sparse-submodules` オプションを指定した場合、`CAP_LAZY_FETCH` を有効化し、親ツリーの `ENTRY_SUBMODULE` ルートコミット (`SFCM`) のみを軽量取得してチェックアウトし、サブモジュール内部のツリーオブジェクトはアクセス時に `MSG_LAZY_FETCH_REQ` (`0x07`) で動的取得する。
 - **LFS ストリーミング**: `MSG_LFS_POINTER_REQ` (`0x09`) で OID を指定し `MSG_LFS_DATA` (`0x0A`) で Range Request (RFC 7233) 方式による分割受領。
 
 ### 4.2 Dynamic Range Object Loading Protocol (`0x0B`, `0x0C`)

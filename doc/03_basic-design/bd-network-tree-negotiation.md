@@ -65,7 +65,13 @@
          │<──────────────────────────────────────────────────┤
 ```
 
-### 3.2 サブモジュール再帰交渉プロトコル (Submodule Recursive Sync Protocol)
+### 3.2 Dynamic Range Object Loading & Prefetch Window Protocol
+1. **Dynamic Range Object Loading Protocol (`0x0B`, `0x0C`)**:
+   - オンデマンド・部分ツリー同期時、クライアントは特定サブツリーの先頭 CID および要求深さ/範囲を指定した `MSG_DYNAMIC_RANGE_REQ` (`0x0B`) フレームを送信し、サーバーは指定範囲のオブジェクトのみを `MSG_DYNAMIC_RANGE_RESP` (`0x0C`) で返答する。
+2. **N+1 ラウンドトリップ回避 Prefetch Window Protocol (`MSG_PREFETCH_BATCH_REQ: 0x0D`)**:
+   - Sparse-Checkout / Lazy Fetch 時における連鎖的オブジェクト取得のラウンドトリップ遅延（N+1問題）を防止するため、クライアントは将来参照されると予測される関連サブツリー CID 集合を一括指定した `MSG_PREFETCH_BATCH_REQ` (`0x0D`) を送信し、サーバーはウィンドウ枠サイズで事前一括レスポンスを返却する。
+
+### 3.3 サブモジュール再帰交渉プロトコル (Submodule Recursive Sync Protocol)
 親ツリー走査時に `ENTRY_SUBMODULE` (`0x04`) を検出した場合、親リポジトリとネストした各サブモジュールの Commit CID を `Channel ID` (`0x0001`, `0x0002`...) ごとに分離して多重化 `MSG_TREE_NEGOTIATE_REQ` を送信し、並列交渉によってサブモジュール未存在（Dangling Ref）のチェックアウト失敗を防止する。
 
 ---

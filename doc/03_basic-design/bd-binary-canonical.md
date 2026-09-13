@@ -46,8 +46,8 @@
 # 3. カノニカルエンコーディング仕様
 
 ### 3.1 整数および可変長表現
-1. **固定長整数 (Fixed-width Integers)**: すべての固定長数値（u16, u32, u64, i64）は **Little-Endian** で表現する。
-2. **可変長整数 (Varint)**: オブジェクト長や配列要素数、フラグなどの可変長表現には **LEB128 (Unsigned LEB128)** を使用する。
+1. **固定長整数 (Fixed-width Integers)**: すべての多バイト固定長数値（u16, u32, u64, i16, i64）は `spec-binary-format.md` に従い **ビッグエンディアン (Big-Endian / Network Byte Order)** で統一表現する。
+2. **可変長整数 (Varint)**: オブジェクト長や配列要素数、フラグなどの可変長表現には **Protocol Buffers 形式の Unsigned LEB128 (varint)** を使用する。
    - LEB128 は各バイトの下位 7 ビットをデータ、最上位ビット (MSB) を継続フラグ（1: 続く, 0: 終了）とする。
 
 ### 3.2 文字列表現および Unicode NFC パス正規化ルール
@@ -63,15 +63,30 @@ $$\text{CID} = \text{BLAKE3}(\text{DomainTag} \mathbin{\Vert} \text{SerializedPa
 
 - **デフォルトハッシュアルゴリズム**: BLAKE3 (`algo_id = 0x02`, 256-bit / 32 bytes)
 - **互換ハッシュアルゴリズム**: SHA-256 (`algo_id = 0x01`, 256-bit / 32 bytes)
+- **CID 33バイト構造**: `[algo_id: uint8 (1 byte)][hash_bytes: 32 bytes]`
 
-| オブジェクト種別 | ドメインタグ (Ascii String) | ドメインタグ (Hex バイト列) |
-| ---------------- | --------------------------- | --------------------------- |
-| Chunk Object     | `SFCK`                      | `0x53, 0x46, 0x43, 0x4B`    |
-| Sequence Node    | `SFSQ`                      | `0x53, 0x46, 0x53, 0x51`    |
-| Symlink Object   | `SFSL`                      | `0x53, 0x46, 0x53, 0x4C`    |
-| File Node        | `SFFL`                      | `0x53, 0x46, 0x46, 0x4C`    |
-| Directory Node   | `SFDR`                      | `0x53, 0x46, 0x44, 0x52`    |
-| Commit Object    | `SFCM`                      | `0x53, 0x46, 0x43, 0x4D`    |
+| オブジェクト種別 | ドメインタグ (Ascii String) | ドメインタグ (Hex バイト列) | Format Version |
+| ---------------- | --------------------------- | --------------------------- | -------------- |
+| Chunk Object     | `SFCK`                      | `0x53, 0x46, 0x43, 0x4B`    | `0x01`         |
+| Sequence Node    | `SFSQ`                      | `0x53, 0x46, 0x53, 0x51`    | `0x01`         |
+| Symlink Object   | `SFSL`                      | `0x53, 0x46, 0x53, 0x4C`    | `0x01`         |
+| File Node        | `SFFL`                      | `0x53, 0x46, 0x46, 0x4C`    | `0x01`         |
+| Directory Node   | `SFDR`                      | `0x53, 0x46, 0x44, 0x52`    | `0x01`         |
+| Commit Object    | `SFCM`                      | `0x53, 0x46, 0x43, 0x4D`    | `0x01`         |
+
+### 3.4 シリアライズヘッダ構造
+全オブジェクトの最先頭には以下の 4 フィールド共通ヘッダが付与される。
+```
++-------------------------------------------------------+
+| Domain Tag (4 bytes ASCII: SFCK/SFSQ/SFSL/SFFL/SFDR/SFCM) |
++-------------------------------------------------------+
+| Format Version (uint8: 0x01)                          |
++-------------------------------------------------------+
+| Payload Length (varint)                               |
++-------------------------------------------------------+
+| Object Type Payload (可変長)                          |
++-------------------------------------------------------+
+```
 
 ---
 
@@ -86,17 +101,20 @@ $$\text{CID} = \text{BLAKE3}(\text{DomainTag} \mathbin{\Vert} \text{SerializedPa
 Prolly Tree (Sequence Tree) の節ノードまたは葉ノードを構成するバイナリ構造。
 ```
 +------------------------------------------------------------------------+
-| Level (u8) | Flags (u8) | Entry Count (Varint)                         |
+| Node Flags (uint8)                                                     |
 +------------------------------------------------------------------------+
-| Entry 1: [Child CID (32B)] [Subtree Length (Varint)] [Boundary (32B)] |
-| Entry 2: [Child CID (32B)] [Subtree Length (Varint)] [Boundary (32B)] |
-| ...                                                                    |
+| Logical Subtree Byte Length (varint)                                   |
++------------------------------------------------------------------------+
+| Children Count (varint: N)                                             |
++------------------------------------------------------------------------+
+| Array of Child Subtree Logical Lengths (varint x N)                    |
++------------------------------------------------------------------------+
+| Array of Child CIDs (33 bytes x N: [algo_id][32B hash])                |
 +------------------------------------------------------------------------+
 ```
-- **Level**: 0 は Leaf Node (Chunk を指す), 1 以上は Internal Node (下位 Sequence Node を指す)。
-- **Flags**:
-  - `0x01`: `IS_COMPRESSED` (ペイロードが Zstandard で圧縮されている)
-  - `0x02`: `HAS_CUSTOM_BOUNDARY` (病的入力フォールバックフラグ)
+- **Node Flags 仕様**:
+  - `0x01` (`FLAG_LEAF_CHILDREN`): 子要素がすべて `Chunk` (`SFCK`) である場合
+  - `0x02` (`FLAG_INTERNAL_CHILDREN`): 子要素がすべて下位の `Sequence Node` (`SFSQ`) である場合
 
 ### 4.3 Symlink Object (`SFSL`)
 シンボリックリンクの参照先ターゲットパスを記録するノード。
@@ -110,46 +128,91 @@ Prolly Tree (Sequence Tree) の節ノードまたは葉ノードを構成する�
 メタデータ、拡張属性 (xattr)、およびコンテンツ参照を保持するノード。
 ```
 +------------------------------------------------------------------------+
-| File Size (u64 LE) | Mode (u32 LE) | Flags (u8) | Content Type (u8)   |
-| Content CID (32B)  | xattr Count (Varint)                              |
+| File Flags (uint8)                                                     |
 +------------------------------------------------------------------------+
-| xattr Entry 1: [Key Len (Varint)] [Key (NFC)] [Val Len (Varint)] [Val] |
-| ...                                                                    |
+| Unix Mode / Permissions (uint32 BE)                                    |
++------------------------------------------------------------------------+
+| Total File Size in Bytes (uint64 BE)                                   |
++------------------------------------------------------------------------+
+| Extended Attributes (xattr) Count (varint)                             |
++------------------------------------------------------------------------+
+| Array of xattr entries (キーのUTF-8バイト昇順ソート済み):              |
+|   [key: String][val_len: varint][val_bytes: bytes]                     |
++------------------------------------------------------------------------+
+| Content Storage Type (uint8)                                           |
++------------------------------------------------------------------------+
+| Content Payload (インラインバイト OR Content Root CID OR LFS Spec)     |
 +------------------------------------------------------------------------+
 ```
-- **Content Storage Type**:
-  - `0x00`: `RAW_CHUNK` (単一 SFCK)
-  - `0x01`: `PROLLY_TREE` (SFSQ ルート)
-  - `0x02`: `LFS_POINTER` (LFS ポインタテキスト)
-- **xattr 決定性ソート規則**: Key はバイト比較（Lexicographical）で昇順ソートしてエンコードする。
+- **File Flags 仕様**:
+  - `0x01` (`FILE_EXEC`): 実行可能ファイル権限 (`0755`)
+  - `0x02` (`FILE_HAS_XATTR`): 拡張属性 (xattr) を保持している場合
+- **Content Storage Type 仕様**:
+  - `0x00` (`CONTENT_INLINE`): ファイルサイズ 1,024 バイト以下。Payload 構造: `[length: varint][raw_bytes: length]`
+  - `0x01` (`CONTENT_SEQUENCE_ROOT`): 通常ファイル。Payload 構造: `[content_root_cid: 33 bytes]`
+  - `0x02` (`CONTENT_LFS_POINTER`): LFS ポインタ。Payload 構造: `[lfs_oid_algo: uint8][lfs_oid_bytes: 32 bytes][size_uint64: uint64 BE]`
+- **xattr 決定性ソート規則**: Key は UTF-8 バイト順（Lexicographical）で厳密に昇順ソートしてエンコードする。重複キーは禁止。
 
 ### 4.5 Directory Node (`SFDR`)
 ディレクトリエントリのリストを記録するノード。
 ```
 +------------------------------------------------------------------------+
-| Entry Count (Varint)                                                   |
+| Directory Permissions / Mode (uint32 BE)                               |
 +------------------------------------------------------------------------+
-| Entry 1: [Name Len (Varint)] [Name (NFC)] [Type (u8)] [Mode (u32 LE)]  |
-|          [CID (32B)] [Size (u64 LE)]                                   |
-| ...                                                                    |
+| Entry Count (varint)                                                   |
++------------------------------------------------------------------------+
+| Array of Entries (名前のUTF-8バイト昇順ソート済み):                    |
+|   [Entry Name Len: varint][Entry Name: UTF-8 NFC]                      |
+|   [Entry Type: uint8][Target CID: 33 bytes]                            |
 +------------------------------------------------------------------------+
 ```
-- **Entry Type**: `0x01` File (`SFFL`), `0x02` Directory (`SFDR`), `0x03` Symlink (`SFSL`), `0x04` Submodule (`SFCM` CID)
-- **ソート規則**: Entry は `Name` の UTF-8 バイト昇順でソートを強制。
+- **Entry Type 仕様**:
+  - `0x01` (`ENTRY_FILE`): File Node (`SFFL`)
+  - `0x02` (`ENTRY_DIRECTORY`): Directory Node (`SFDR`)
+  - `0x03` (`ENTRY_SYMLINK`): Symlink Object (`SFSL`)
+  - `0x04` (`ENTRY_SUBMODULE`): サブモジュール（Commit `SFCM` CID）
+- **ソート規則**: Entry は `Entry Name` の UTF-8 バイト昇順（Lexicographical order）でソートを強制。重複名は禁止。
 
 ### 4.6 Commit Object (`SFCM`)
 リポジトリ履歴のスナップショットノード。
 ```
 +------------------------------------------------------------------------+
-| Tree Root CID (32B) | Parent Count (Varint) | [Parent CIDs (32B...)]    |
-| Author Name (NFC String) | Author Email String                         |
-| Author Timestamp (i64 LE) | Author Timezone Offset (i16 LE)            |
-| Committer Name | Committer Email | Committer Timestamp | Committer TZ |
-| PGP Signature Type (u8) | Signature Length (Varint) | Signature Bytes  |
-| Commit Message Length (Varint) | Commit Message (UTF-8 NFC String)     |
+| Root Directory CID (33 bytes)                                          |
++------------------------------------------------------------------------+
+| Parent Count (uint8)                                                   |
++------------------------------------------------------------------------+
+| Parent Commit CIDs (33 bytes x Parent Count)                           |
++------------------------------------------------------------------------+
+| Author Name (Length-prefixed UTF-8 NFC String)                         |
++------------------------------------------------------------------------+
+| Author Email (Length-prefixed UTF-8 String)                            |
++------------------------------------------------------------------------+
+| Author Timestamp Unix Epoch Seconds (int64 BE)                         |
++------------------------------------------------------------------------+
+| Author Timezone Offset Minutes (int16 BE)                              |
++------------------------------------------------------------------------+
+| Committer Name (Length-prefixed UTF-8 NFC String)                      |
++------------------------------------------------------------------------+
+| Committer Email (Length-prefixed UTF-8 String)                         |
++------------------------------------------------------------------------+
+| Committer Timestamp Unix Epoch Seconds (int64 BE)                      |
++------------------------------------------------------------------------+
+| Committer Timezone Offset Minutes (int16 BE)                           |
++------------------------------------------------------------------------+
+| Commit Message Bytes (Length-prefixed UTF-8 String)                    |
++------------------------------------------------------------------------+
+| Signature Type (uint8)                                                 |
++------------------------------------------------------------------------+
+| Signature Bytes Length (varint)                                        |
++------------------------------------------------------------------------+
+| Signature Bytes (可変長)                                               |
 +------------------------------------------------------------------------+
 ```
-- **Signature Type**: `0x00` None, `0x01` Ed25519, `0x02` ECDSA P-256, `0x03` PGP/GPG.
+- **Signature Type 仕様**:
+  - `0x00` (`SIG_NONE`): 署名なし
+  - `0x01` (`SIG_ED25519`): Ed25519 生署名バイト (64バイト)
+  - `0x02` (`SIG_SSH`): SSH 署名フォーマット文字列
+  - `0x03` (`SIG_GPG`): GPG / PGP ASCII Armor 署名ブロック文字列
 
 ---
 
@@ -163,22 +226,37 @@ size 104857600
 ```
 
 ### 5.2 信頼キーリングバイナリ規格 (`SFKR`)
+`.sfvcs/keyring` のバイナリレイアウト構造。
 ```
 +------------------------------------------------------------------------+
-| Magic: "SFKR" (4B) | Version (u8: 1) | Key Count (Varint)               |
+| Magic "SFKR" (4 bytes)                                                 |
 +------------------------------------------------------------------------+
-| Key 1: [Key ID (8B LE)] [Algo (u8)] [Public Key Bytes (Varint len)]    |
-|        [Trust Level (u8)] [User Identifier String]                     |
+| Format Version: 0x01 (uint8)                                           |
++------------------------------------------------------------------------+
+| Key Count (varint)                                                     |
++------------------------------------------------------------------------+
+| Key Entries (キーID昇順ソート済み):                                    |
+|   - Key ID Length (varint)                                             |
+|   - Key ID Bytes (UTF-8, Key Fingerprint)                              |
+|   - Key Type (0x01: Ed25519, 0x02: RSA, 0x03: ECDSA)                   |
+|   - Public Key Bytes Length (varint)                                   |
+|   - Public Key Raw Bytes                                               |
 +------------------------------------------------------------------------+
 ```
 
 ### 5.3 鍵失効リスト規格 (`SFRL`)
+失効したコミット署名鍵のインデックスを保持する `.sfvcs/crl` バイナリレイアウト構造。
 ```
 +------------------------------------------------------------------------+
-| Magic: "SFRL" (4B) | Version (u8: 1) | Revoked Count (Varint)           |
+| Magic "SFRL" (4 bytes)                                                 |
 +------------------------------------------------------------------------+
-| Revoked Key 1: [Key ID (8B LE)] [Revocation Time (i64 LE)]             |
-|                [Reason Code (u8)] [Description String]                 |
+| Format Version: 0x01 (uint8)                                           |
++------------------------------------------------------------------------+
+| Revoked Key Count (varint)                                             |
++------------------------------------------------------------------------+
+| Revoked Key Fingerprints (32 bytes x Count)                            |
++------------------------------------------------------------------------+
+| Revocation Reason Code Array (uint8 x Count)                           |
 +------------------------------------------------------------------------+
 ```
 

@@ -67,9 +67,9 @@
 
 ---
 
-# 5. サブモジュール分岐統合時におけるマージベース自動判定および Detached HEAD 競合自動調停
+# 5. サブモジュール分岐統合時におけるマージベース自動判定および Detached HEAD 競合自動調停 (3-Way Submodule Commit Merge)
 
-`ENTRY_SUBMODULE` (`0x04`) の Commit CID が双方で変更されていた場合、サブモジュール内部リポジトリの DAG においてマージベースを自動計算する。
+`ENTRY_SUBMODULE` (`0x04`) の Commit CID が双方で変更されていた場合、サブモジュール内部リポジトリの DAG において 3-Way Submodule Commit Merge 規則に基づきマージベースを自動判定する。
 
 1. **Submodule Fast-Forward 判定**:
    Submodule Commit CID が Base から一方向のみの進展であれば自動 Fast-Forward 更新。

@@ -5,9 +5,9 @@
 
 # 1. 概要と目的
 
-本設計書は、多数のルーズオブジェクトを単一の圧縮アーカイブに束ねて I/O およびディスク容量を削減する `.pack` ファイル、高速ランダムアクセスのための `.idx` インデックス、Thin Delta 差分探索アルゴリズム、およびエポック置換型並行ロックフリー Packfile 再構築 (Lockless Epoch-Based Packfile Compaction) の基本設計書である。
+本設計書は、多数のルーズオブジェクトを単一の圧縮アーカイブに束ねて I/O およびディスク容量を削減する `.pack` ファイル、高速ランダムアクセスのための `.idx` インデックス、VCDIFF (RFC 3284) バイナリデルタ符号化仕様、Thin Delta 差分探索アルゴリズム、およびエポック置換型並行ロックフリー Packfile 再構築 (Lockless Epoch-Based Packfile Compaction) の基本設計書である。
 
-本書は `doc/02_specs/spec-storage.md` の第4節 (4.1, 4.2), 第16節 (16.1), 第19節 (19.1) および `doc/01_architecture/sfvcs-design.md` の第171.5, 171.14節の仕様を完全網羅し、カプセル化された Packfile Storage Layer モジュールとして詳細を定義する。
+本書は `doc/02_specs/spec-storage.md` の第4節 (4.1, 4.2), 第11節 (11.1), 第16節 (16.1), 第19節 (19.1) および `doc/01_architecture/sfvcs-design.md` の関連仕様を完全網羅し、カプセル化された Packfile Storage Layer モジュールとして詳細を定義する。
 
 ---
 
@@ -40,7 +40,7 @@
 ### 3.1 `.pack` ファイル構造
 ```
 +------------------------------------------------------------------------+
-| Header: "SFPK" (4B) | Version (u32 LE: 1) | Object Count (u32 LE)      |
+| Header: "SFPK" (4B) | Version (u32 BE: 1) | Object Count (u32 BE)      |
 +------------------------------------------------------------------------+
 | Object Entry 1 | Object Entry 2 | ... | Object Entry N                |
 +------------------------------------------------------------------------+
@@ -50,6 +50,15 @@
 
 - **Object Entry Layout**: `[Type & Size (Varint)]` + `[Base Offset / Base CID (Thin Delta の場合)]` + `[Compressed Payload (Zstandard / Deflate)]`
 - **Thin Delta 制限規則**: デルタチェインの最大深さを `MAX_DELTA_DEPTH = 50` に制限し、循環参照を禁止する。
+
+### 3.3 VCDIFF (RFC 3284) バイナリデルタ符号化仕様
+パックファイル内のデルタオブジェクト圧縮（Thin Delta）には RFC 3284 に準拠した VCDIFF 命令コードを使用する。
+- **主要命令コード**:
+  - `VCD_NOOP` (`0x00`): 操作なし
+  - `VCD_ADD` (`0x01`): 新規バイト列の直接挿入。構造: `[length: varint][bytes]`
+  - `VCD_RUN` (`0x02`): 連続同バイト反復。構造: `[length: varint][byte]`
+  - `VCD_COPY` (`0x03`): 基底 (Base) オブジェクトの特定範囲をコピー。構造: `[length: varint][offset: varint]`
+- **メモリ制約**: ストリーミングデコーダは設定された最大スライディングウィンドウサイズ（デフォルト: 64MB）を超過するメモリ消費を行わないようバッファ管理を徹底する。
 
 ### 3.2 `.idx` (Version 2) ファイル構造
 - **Header**: `\xFFtOc` (4B) + `Version: 2` (4B LE)
