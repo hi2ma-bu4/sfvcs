@@ -14,12 +14,18 @@ doc/
 │   └── doc-naming-rules.md   # 本ドキュメント
 ├── architecture/             # 全体アーキテクチャ・設計思想・基本方針
 │   └── sfvcs-design.md       # 全体基本設計書
-└── specs/                    # 各機能・レイヤーごとの詳細仕様書
-    ├── spec-binary-format.md # バイナリレイアウト・カノニカルシリアライズ仕様
-    ├── spec-algorithms.md    # 各種アルゴリズム (CDC, Prolly Tree, Diff, Move) 仕様
-    ├── spec-storage.md       # ストレージ構造・パック・プラガブルアダプタ仕様
-    ├── spec-virtual-vcs.md   # 仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB) 仕様
-    └── spec-cli-and-api.md   # CLI・Core API・エラー定義仕様
+├── specs/                    # 各機能・レイヤーごとの詳細仕様書
+│   ├── spec-binary-format.md # バイナリレイアウト・カノニカルシリアライズ仕様
+│   ├── spec-algorithms.md    # 各種アルゴリズム (CDC, Prolly Tree, Diff, Move) 仕様
+│   ├── spec-storage.md       # ストレージ構造・パック・プラガブルアダプタ仕様
+│   ├── spec-virtual-vcs.md   # 仮想VCS (インメモリ/ブラウザ/OPFS/IndexedDB) 仕様
+│   ├── spec-cli-and-api.md   # CLI・Core API・エラー定義仕様
+│   ├── spec-config-and-attributes.md # 設定・属性仕様
+│   ├── spec-merge.md         # 3-Way Merge 仕様
+│   └── spec-network.md       # ネットワーク・Wire Protocol 仕様
+├── basic-design/             # コード実装の1機能単位に細分化した基本設計書
+│   └── bd-<feature>.md       # 各機能基本設計書 (例: bd-storage-index.md, bd-algo-fastcdc.md)
+└── basic-design-checklist.md # 全仕様と基本設計書の100%完全追跡チェックリスト
 ```
 
 ---
@@ -28,8 +34,9 @@ doc/
 
 1. **小文字のケバブケース (`kebab-case.md`)** を使用する。
 2. 仕様書ファイルはプレフィックス `spec-` を使用する（例: `spec-virtual-vcs.md`）。
-3. 規約・ルールファイルはディレクトリ `doc/rules/` に配置し、内容が明確にわかる名称とする。
-4. ファイル名にスペースや日本語（全角文字）を含めることは禁止する。
+3. 基本設計書ファイルは `doc/basic-design/` に配置し、プレフィックス `bd-` を使用する（例: `bd-algo-fastcdc.md`, `bd-storage-packfile.md`）。
+4. 規約・ルールファイルはディレクトリ `doc/rules/` に配置し、内容が明確にわかる名称とする。
+5. ファイル名にスペースや日本語（全角文字）を含めることは禁止する。
 
 ---
 
@@ -39,6 +46,9 @@ doc/
 
 - **単一責任の原則**: 1つの仕様書ファイルは特定の概念・レイヤー（例: バイナリフォーマット、ストレージ、アルゴリズム）のみを扱う。
 - **波及の抑制**: ストレージドライバや暗号化アルゴリズムの変更が、他のコアロジックやドキュメントに影響を与えないよう、抽象化インターフェース（アダプタ）を介して接続する。
+- **カプセル化（MVC的関心事の分離）**: 基本設計においては、仕様のベタ貼りではなく機能ごとの役割・責任・境界（Model / Service / Adapter / Controller など）をカプセル化して整理し、他機能の仕様変更による影響範囲を最小化する。
+- **言語および実行環境の原則**: 実装基盤として CLI / Core API レイヤーは TypeScript / Node.js、パフォーマンスクリティカルな核心アルゴリズム・バイナリエンコード/デコード・暗号化処理は Rust / WebAssembly (WASM) を積極活用する設計とする。
+- **非破壊・完全網羅性**: 既存の `doc/specs/` および `doc/architecture/` の仕様・設計情報は一切削減・破壊・後回しにせず、基本設計書を見るだけで全体の実装が完全に理解できるよう 100% 網羅・再構築する。
 
 ---
 
